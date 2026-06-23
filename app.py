@@ -48,14 +48,13 @@ def process_pdf_endpoint():
             # 4. Paste the inverted snapshot onto the new page
             new_page.insert_image(page.rect, stream=pix.tobytes())
             
-            # 5. Add a highly visible Custom Watermark
-            watermark_rect = fitz.Rect(new_page.rect.width - 200, new_page.rect.height - 30, new_page.rect.width - 10, new_page.rect.height - 10)
-            new_page.insert_textbox(
-                watermark_rect, 
+           # 5. Add a bulletproof Custom Watermark
+            # We use insert_text so it never gets constrained by a hidden box
+            new_page.insert_text(
+                (20, 40), # X, Y coordinates (Top Left corner)
                 custom_watermark, 
-                fontsize=12, 
-                color=(1, 0, 0), # Red color so it's obvious during testing
-                align=fitz.TEXT_ALIGN_RIGHT
+                fontsize=18, 
+                color=(1, 0, 0) # Pure Red
             )
             
         output_stream = io.BytesIO()
