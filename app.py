@@ -20,31 +20,28 @@ A4_PORTRAIT_H = 842
 # Scalable Row-and-Column configurations for Portrait Mode
 PORTRAIT_GRID_MAP = {
     1: (1, 1),
-    2: (2, 1),   # 2 rows, 1 col
-    3: (3, 1),   # 3 rows, 1 col
-    4: (2, 2),   # 2 rows, 2 cols
-    6: (3, 2),   # 3 rows, 2 cols
-    8: (4, 2),   # 4 rows, 2 cols
-    9: (3, 3),   # 3 rows, 3 cols
-    12: (4, 3),  # 4 rows, 3 cols
-    16: (4, 4)   # 4 rows, 4 cols
+    2: (2, 1),   
+    3: (3, 1),   
+    4: (2, 2),   
+    6: (3, 2),   
+    8: (4, 2),   
+    9: (3, 3),   
+    12: (4, 3),  
+    16: (4, 4)   
 }
 
 def get_grid_layout(n_up, orientation, padding=12):
     """Dynamically recalculates page aspect ratios and solves grid canvas coordinates."""
-    # Determine canvas bounds based on orientation setting
     if orientation == "landscape":
         page_w = A4_PORTRAIT_H
         page_h = A4_PORTRAIT_W
         base_rows, base_cols = PORTRAIT_GRID_MAP.get(n_up, (1, 1))
-        # Flip rows and columns to naturally fit a wider landscape sheet layout!
         rows, cols = base_cols, base_rows
     else:
         page_w = A4_PORTRAIT_W
         page_h = A4_PORTRAIT_H
         rows, cols = PORTRAIT_GRID_MAP.get(n_up, (1, 1))
 
-    # Calculate individual cell geometry dimensions
     cell_w = (page_w - (cols + 1) * padding) / cols
     cell_h = (page_h - (rows + 1) * padding) / rows
     
@@ -59,10 +56,9 @@ def get_grid_layout(n_up, orientation, padding=12):
             
     return rects, rows * cols, page_w, page_h
 
-def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc):
-    """Processes, inverts, and maps page coordinates cleanly inside orientation bounds."""
+def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc, current_rect_idx=0, new_page=None):
+    """Processes page frames while continuously preserving layout grid state tracking references across files."""
     if n_up == 1:
-        # Standard full page scaling layout
         for page_num in page_indices:
             if page_num >= len(doc): continue
             page = doc[page_num]
@@ -70,21 +66,20 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, ou
             pix = page.get_pixmap(matrix=zoom_matrix)
             pix.invert_irect(pix.irect)
             
-            # Match single page dimension adjustments
             new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
             new_page.insert_image(page.rect, stream=pix.tobytes())
             new_page.insert_text((20, 40), custom_watermark, fontsize=18, color=(1, 0, 0))
+        return 0, None
     else:
-        # Resolve target canvas metrics
         grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation)
-        current_rect_idx = 0
-        new_page = None
         
         for page_num in page_indices:
             if page_num >= len(doc): continue
             
-            if current_rect_idx == 0:
+            # Open up a fresh sheet only if the previous layout page reference is spent or empty
+            if new_page is None:
                 new_page = out_doc.new_page(width=target_w, height=target_h)
+                current_rect_idx = 0
                 
             page = doc[page_num]
             zoom_matrix = fitz.Matrix(2, 2)
@@ -100,6 +95,9 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, ou
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
+                new_page = None # Flag that this page is completely full
+                
+        return current_rect_idx, new_page
 
 # --- API ENDPOINTS ---
 @app.route('/api/v1/process-pdf', methods=['POST'])
@@ -111,7 +109,7 @@ def process_pdf_endpoint():
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     pages_to_keep_str = request.form.get('pages_to_keep', '')
     n_up = int(request.form.get('n_up', 1))
-    orientation = request.form.get('orientation', 'portrait') # Catch orientation variable
+    orientation = request.form.get('orientation', 'portrait')
     
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -148,13 +146,17 @@ def merge_pdfs_endpoint():
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     page_maps = request.form.getlist('page_maps')
     n_up = int(request.form.get('n_up', 1))
-    orientation = request.form.get('orientation', 'portrait') # Catch orientation variable
+    orientation = request.form.get('orientation', 'portrait')
     
     if not files or files[0].filename == '':
         return jsonify({"error": "No selected files"}), 400
 
     try:
         out_doc = fitz.open()
+        
+        # Track persistent grid metrics across individual file boundaries!
+        global_rect_idx = 0
+        global_active_page = None
         
         for index, file in enumerate(files):
             pdf_bytes = file.read()
@@ -165,7 +167,11 @@ def merge_pdfs_endpoint():
             else:
                 page_indices = list(range(len(doc)))
             
-            process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc)
+            # Catch updated state indexes returned from previous execution bounds
+            global_rect_idx, global_active_page = process_pdf_pages(
+                doc, page_indices, custom_watermark, n_up, orientation, out_doc, 
+                current_rect_idx=global_rect_idx, new_page=global_active_page
+            )
             doc.close()
             
         output_stream = io.BytesIO()

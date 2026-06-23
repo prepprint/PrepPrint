@@ -9,13 +9,14 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // NEW: Platform State for Dynamic N-Up Layouts
+  // Platform Layout Optimization States
   const [nUp, setNUp] = useState(1);
+  const [orientation, setOrientation] = useState('portrait');
 
-  // States for the Visual Page Manager
+  // Visual Page Slicing States
   const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
-  const [pageMaps, setPageMaps] = useState({}); // Stores configuration arrays per file ID
-  const [activeModalFile, setActiveModalFile] = useState(null); // Tracks file currently open in visual grid
+  const [pageMaps, setPageMaps] = useState({}); 
+  const [activeModalFile, setActiveModalFile] = useState(null); 
 
   // 1. Inject PDF.js CDN safely on mount
   useEffect(() => {
@@ -32,7 +33,6 @@ export function FileUpload() {
     };
     document.body.appendChild(script);
 
-    // Sync Dark Mode state from global HTML element
     if (document.documentElement.classList.contains('dark')) {
       setIsDarkMode(true);
     }
@@ -51,7 +51,7 @@ export function FileUpload() {
 
         for (let i = 1; i <= totalPages; i++) {
           const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 0.3 }); // Small crisp thumbnail scale
+          const viewport = page.getViewport({ scale: 0.3 }); 
           const canvas = document.createElement('canvas');
           const context = canvas.getContext('2d');
           canvas.height = viewport.height;
@@ -59,10 +59,10 @@ export function FileUpload() {
 
           await page.render({ canvasContext: context, viewport: viewport }).promise;
           pagesArray.push({
-            index: i - 1, // 0-indexed for backend engines
+            index: i - 1, 
             displayNum: i,
             thumbnail: canvas.toDataURL(),
-            keep: true // Default state: keep page
+            keep: true 
           });
         }
         setPageMaps(prev => ({ ...prev, [id]: pagesArray }));
@@ -76,7 +76,6 @@ export function FileUpload() {
   const onDrop = useCallback((acceptedFiles) => {
     const newFiles = acceptedFiles.map(file => {
       const id = Math.random().toString(36).substring(7);
-      // Run asynchronous extraction inside browser background
       generateThumbnails(file, id);
       return {
         id, file, status: 'idle', progress: 0, statusText: 'Waiting in queue...'
@@ -126,7 +125,6 @@ export function FileUpload() {
     const updateFile = (updates) => setFiles(prev => prev.map(f => f.id === fileId ? { ...f, ...updates } : f));
     updateFile({ status: 'processing', progress: 15, statusText: 'Uploading...' });
     
-    // Compile active page mapping array
     const explicitPages = pageMaps[fileId] 
       ? pageMaps[fileId].filter(p => p.keep).map(p => p.index).join(',')
       : '';
@@ -135,7 +133,8 @@ export function FileUpload() {
     formData.append('file', currentFile);
     formData.append('watermark', watermark);
     formData.append('pages_to_keep', explicitPages);
-    formData.append('n_up', nUp); // Appending dynamic layout multiplier to backend
+    formData.append('n_up', nUp);
+    formData.append('orientation', orientation);
 
     const progressInterval = setInterval(() => {
       setFiles(prev => prev.map(f => (f.id === fileId && f.status === 'processing' && f.progress < 85) 
@@ -166,9 +165,9 @@ export function FileUpload() {
     const formData = new FormData();
     files.forEach(f => formData.append('files', f.file)); 
     formData.append('watermark', watermark);
-    formData.append('n_up', nUp); // Appending dynamic layout multiplier to batch config
+    formData.append('n_up', nUp);
+    formData.append('orientation', orientation);
 
-    // Build matching ordered array parameters for the backend loop
     files.forEach(f => {
       const explicitPages = pageMaps[f.id]
         ? pageMaps[f.id].filter(p => p.keep).map(p => p.index).join(',')
@@ -219,8 +218,8 @@ export function FileUpload() {
   return (
     <div className="w-full max-w-2xl mx-auto mt-8 px-4">
       
-      {/* Configuration Control Panel Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+      {/* 3-Column Configuration Panel Grid Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
           <input 
@@ -229,7 +228,6 @@ export function FileUpload() {
           />
         </div>
 
-        {/* Master Scalable N-Up Grid Selector Component */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Layout Optimization (N-Up)</label>
           <select 
@@ -237,14 +235,26 @@ export function FileUpload() {
             className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all"
           >
             <option value="1">1 Slide per page (Standard)</option>
-            <option value="2">2 Slides per A4 Page (Portrait Stack)</option>
-            <option value="3">3 Slides per A4 Page (Vertical Stack - Notes Base)</option>
-            <option value="4">4 Slides per A4 Page (2x2 Matrix Grid)</option>
-            <option value="6">6 Slides per A4 Page (3x2 Matrix Grid)</option>
-            <option value="8">8 Slides per A4 Page (4x2 Matrix Grid)</option>
-            <option value="9">9 Slides per A4 Page (3x3 Matrix Grid)</option>
-            <option value="12">12 Slides per A4 Page (4x3 Matrix Grid)</option>
-            <option value="16">16 Slides per A4 Page (4x4 Matrix Grid - Extreme Save)</option>
+            <option value="2">2 Slides per A4 Page</option>
+            <option value="3">3 Slides per A4 Page (Notes Setup)</option>
+            <option value="4">4 Slides per A4 Page</option>
+            <option value="6">6 Slides per A4 Page</option>
+            <option value="8">8 Slides per A4 Page</option>
+            <option value="9">9 Slides per A4 Page</option>
+            <option value="12">12 Slides per A4 Page</option>
+            <option value="16">16 Slides per A4 Page (Max Save)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Page Orientation</label>
+          <select 
+            value={orientation} onChange={(e) => setOrientation(e.target.value)} disabled={isGlobalProcessing || nUp === 1}
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            title={nUp === 1 ? "Orientation configuration applies to grid multi-page optimization modes" : "Choose layout style"}
+          >
+            <option value="portrait">Portrait View (Vertical)</option>
+            <option value="landscape">Landscape View (Wide)</option>
           </select>
         </div>
       </div>
@@ -297,7 +307,7 @@ export function FileUpload() {
                         </span>
                         {pagesData.length > 0 && (
                           <span className="text-xs text-gray-400 mt-0.5">
-                            Total Pages: {pagesData.length} {excludedCount > 0 && `(${excludedCount} page(s) marked for deletion)`}
+                            Total Pages: {pagesData.length} {excludedCount > 0 && `(${excludedCount} page(s) deleted)`}
                           </span>
                         )}
                       </div>
@@ -306,7 +316,6 @@ export function FileUpload() {
                     <div className="flex items-center space-x-1">
                       {f.status === 'idle' && !isGlobalProcessing && (
                         <>
-                          {/* 5. Trigger Interactive Modal Page-Picker Grid */}
                           <button 
                             onClick={() => setActiveModalFile(f)}
                             className="p-1.5 rounded text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
@@ -352,12 +361,11 @@ export function FileUpload() {
         </div>
       )}
 
-      {/* 6. FULL-SCREEN INTERACTIVE VISUAL MODAL WORKSPACE */}
+      {/* FULL-SCREEN INTERACTIVE VISUAL MODAL WORKSPACE */}
       {activeModalFile && pageMaps[activeModalFile.id] && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-5xl h-[85vh] bg-white dark:bg-gray-950 rounded-2xl flex flex-col shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden animate-in fade-in zoom-in duration-150">
             
-            {/* Modal Header Controls */}
             <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
               <div className="min-w-0 pr-4">
                 <h3 className="text-base font-bold text-gray-900 dark:text-white truncate">{activeModalFile.file.name}</h3>
@@ -366,53 +374,34 @@ export function FileUpload() {
                   Deleting <span className="font-semibold text-red-500">{pageMaps[activeModalFile.id].filter(p => !p.keep).length}</span> pages
                 </p>
               </div>
-              <button 
-                onClick={() => setActiveModalFile(null)}
-                className="px-4 py-2 bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-bold rounded-lg text-sm transition-all hover:opacity-90 shadow"
-              >
+              <button onClick={() => setActiveModalFile(null)} className="px-4 py-2 bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-bold rounded-lg text-sm shadow">
                 Apply Layout & Close
               </button>
             </div>
 
-            {/* Scrollable Document Canvas Grid View */}
             <div className="flex-1 overflow-y-auto p-6 bg-gray-100/50 dark:bg-gray-900/20">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
                 {pageMaps[activeModalFile.id].map((page, pIdx) => (
                   <div 
-                    key={pIdx}
-                    onClick={() => togglePageSelection(activeModalFile.id, pIdx)}
-                    className={`group relative border rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-gray-900 select-none shadow-sm transition-all duration-200 hover:scale-102 hover:shadow-md
-                      ${page.keep 
-                        ? 'border-gray-200 dark:border-gray-800 ring-2 ring-transparent hover:ring-blue-500' 
-                        : 'border-red-300 dark:border-red-900 ring-2 ring-red-500 opacity-60'
-                      }`}
+                    key={pIdx} onClick={() => togglePageSelection(activeModalFile.id, pIdx)}
+                    className={`group relative border rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-gray-900 select-none shadow-sm transition-all duration-200 hover:scale-102 hover:shadow-md ${page.keep ? 'border-gray-200 dark:border-gray-800 ring-2 ring-transparent hover:ring-blue-500' : 'border-red-300 dark:border-red-900 ring-2 ring-red-500 opacity-60'}`}
                   >
-                    {/* Rendered Canvas Thumbnail Image */}
                     <div className="aspect-[3/4] flex items-center justify-center p-2 bg-gray-50 dark:bg-gray-950">
                       <img src={page.thumbnail} alt={`Page ${page.displayNum}`} className="max-h-full max-w-full object-contain pointer-events-none" />
                     </div>
 
-                    {/* Meta Layout Overlay & Selection Indicators */}
                     <div className="p-2 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50 dark:bg-gray-900">
                       <span className="text-xs font-bold text-gray-500 dark:text-gray-400">Page {page.displayNum}</span>
                       {page.keep ? (
-                        <div className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-600 flex items-center justify-center group-hover:border-blue-500">
-                          <div className="w-2 h-2 rounded-full bg-transparent group-hover:bg-blue-500"></div>
-                        </div>
+                        <div className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-600 flex items-center justify-center group-hover:border-blue-500"><div className="w-2 h-2 rounded-full bg-transparent group-hover:bg-blue-500"></div></div>
                       ) : (
-                        <div className="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center">
-                          <X className="w-2.5 h-2.5 text-white stroke-[4]" />
-                        </div>
+                        <div className="w-4 h-4 rounded-full bg-red-500 flex items-center justify-center"><X className="w-2.5 h-2.5 text-white stroke-[4]" /></div>
                       )}
                     </div>
 
-                    {/* Absolute Overlays for Flagged Deletions */}
                     {!page.keep && (
                       <div className="absolute inset-0 bg-red-500/10 backdrop-blur-[0.5px] flex flex-col items-center justify-center pointer-events-none">
-                        <div className="bg-red-600 text-white font-black text-xs px-2 py-1 rounded shadow flex items-center space-x-1">
-                          <Trash2 className="w-3 h-3" />
-                          <span>DELETING</span>
-                        </div>
+                        <div className="bg-red-600 text-white font-black text-xs px-2 py-1 rounded shadow flex items-center space-x-1"><Trash2 className="w-3 h-3" /><span>DELETING</span></div>
                       </div>
                     )}
                   </div>
