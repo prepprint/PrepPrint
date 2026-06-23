@@ -17,6 +17,7 @@ PORT = int(os.getenv("PORT", 5000))
 A4_PORTRAIT_W = 595
 A4_PORTRAIT_H = 842
 
+# Scalable Row-and-Column configurations for Portrait Mode
 PORTRAIT_GRID_MAP = {
     1: (1, 1),
     2: (2, 1),   
@@ -30,7 +31,7 @@ PORTRAIT_GRID_MAP = {
 }
 
 def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_page=True):
-    """Dynamically solves grid cell geometries with responsive safety margins for spiral binding."""
+    """Dynamically recalculates page aspect ratios and solves grid canvas coordinates."""
     if orientation == "landscape":
         page_w = A4_PORTRAIT_H
         page_h = A4_PORTRAIT_W
@@ -50,7 +51,6 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
         h_offset = 36
     elif gutter_type == 'alternating':
         avail_w = page_w - 36
-        # Odd pages bind on the left, even pages bind on the right side
         h_offset = 36 if is_odd_page else 0
 
     cell_w = (avail_w - (cols + 1) * padding) / cols
@@ -78,7 +78,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             pix.invert_irect(pix.irect)
             
             w, h = page.rect.width, page.rect.height
-            is_odd = (len(out_doc) % 2 == 0) # 0-indexed page lengths determine odd sheets
+            is_odd = (len(out_doc) % 2 == 0)
             
             if gutter_type == 'left':
                 target_rect = fitz.Rect(36, 0, w + 36, h)
@@ -97,6 +97,12 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             new_page.insert_text((target_rect.x0 + 20, 40), custom_watermark, fontsize=18, color=(1, 0, 0))
         return 0, None
     else:
+        # FIX: Pre-initialize layout coordinates immediately for carried-over page state tokens
+        is_odd_sheet = (len(out_doc) % 2 == 0)
+        grid_rects, max_per_page, target_w, target_h = get_grid_layout(
+            n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet
+        )
+
         for page_num in page_indices:
             if page_num >= len(doc): continue
             
@@ -126,7 +132,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 
         return current_rect_idx, new_page
 
-# --- RESTFUL API ENDPOINTS ---
+# --- API ENDPOINTS ---
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files:
