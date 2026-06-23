@@ -13,33 +13,40 @@ CORS(app)
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", 5000))
 
-# Standard A4 Dimensions in points
-A4_WIDTH = 595
-A4_HEIGHT = 842
+# Standard A4 Base Dimensions in points
+A4_PORTRAIT_W = 595
+A4_PORTRAIT_H = 842
 
-# --- THE EXPANDABLE GRID DICTIONARY MAP ---
-# Format: n_up_value: (rows, columns)
-# This design makes it incredibly simple to add custom configurations or note splits in the future.
-GRID_CONFIGS = {
+# Scalable Row-and-Column configurations for Portrait Mode
+PORTRAIT_GRID_MAP = {
     1: (1, 1),
-    2: (2, 1),   # 2 portrait slides stacked vertically
-    3: (3, 1),   # 3 slides stacked vertically (Perfect foundation for Notes Mode!)
-    4: (2, 2),   # 2x2 Matrix
-    6: (3, 2),   # 3x2 Matrix
-    8: (4, 2),   # 4x2 Matrix
-    9: (3, 3),   # 3x3 Grid Matrix
-    12: (4, 3),  # 4x3 Grid Matrix
-    16: (4, 4)   # 4x4 Hyper-Compression Matrix
+    2: (2, 1),   # 2 rows, 1 col
+    3: (3, 1),   # 3 rows, 1 col
+    4: (2, 2),   # 2 rows, 2 cols
+    6: (3, 2),   # 3 rows, 2 cols
+    8: (4, 2),   # 4 rows, 2 cols
+    9: (3, 3),   # 3 rows, 3 cols
+    12: (4, 3),  # 4 rows, 3 cols
+    16: (4, 4)   # 4 rows, 4 cols
 }
 
-def get_grid_layout(n_up, padding=12):
-    """Dynamically solves grid cell geometries for any arbitrary matrix configuration."""
-    # Fallback to standard 1-up if an unmapped layout integer arrives
-    rows, cols = GRID_CONFIGS.get(n_up, (1, 1))
+def get_grid_layout(n_up, orientation, padding=12):
+    """Dynamically recalculates page aspect ratios and solves grid canvas coordinates."""
+    # Determine canvas bounds based on orientation setting
+    if orientation == "landscape":
+        page_w = A4_PORTRAIT_H
+        page_h = A4_PORTRAIT_W
+        base_rows, base_cols = PORTRAIT_GRID_MAP.get(n_up, (1, 1))
+        # Flip rows and columns to naturally fit a wider landscape sheet layout!
+        rows, cols = base_cols, base_rows
+    else:
+        page_w = A4_PORTRAIT_W
+        page_h = A4_PORTRAIT_H
+        rows, cols = PORTRAIT_GRID_MAP.get(n_up, (1, 1))
 
-    # Calculate exact cell dimensions subtracting total padding overhead
-    cell_w = (A4_WIDTH - (cols + 1) * padding) / cols
-    cell_h = (A4_HEIGHT - (rows + 1) * padding) / rows
+    # Calculate individual cell geometry dimensions
+    cell_w = (page_w - (cols + 1) * padding) / cols
+    cell_h = (page_h - (rows + 1) * padding) / rows
     
     rects = []
     for r in range(rows):
@@ -50,11 +57,12 @@ def get_grid_layout(n_up, padding=12):
             y1 = y0 + cell_h
             rects.append(fitz.Rect(x0, y0, x1, y1))
             
-    return rects, rows * cols
+    return rects, rows * cols, page_w, page_h
 
-def process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc):
-    """Processes, inverts, and maps page streams dynamically to solved grid sheets."""
+def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc):
+    """Processes, inverts, and maps page coordinates cleanly inside orientation bounds."""
     if n_up == 1:
+        # Standard full page scaling layout
         for page_num in page_indices:
             if page_num >= len(doc): continue
             page = doc[page_num]
@@ -62,11 +70,13 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc):
             pix = page.get_pixmap(matrix=zoom_matrix)
             pix.invert_irect(pix.irect)
             
+            # Match single page dimension adjustments
             new_page = out_doc.new_page(width=page.rect.width, height=page.rect.height)
             new_page.insert_image(page.rect, stream=pix.tobytes())
             new_page.insert_text((20, 40), custom_watermark, fontsize=18, color=(1, 0, 0))
     else:
-        grid_rects, max_per_page = get_grid_layout(n_up)
+        # Resolve target canvas metrics
+        grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation)
         current_rect_idx = 0
         new_page = None
         
@@ -74,7 +84,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc):
             if page_num >= len(doc): continue
             
             if current_rect_idx == 0:
-                new_page = out_doc.new_page(width=A4_WIDTH, height=A4_HEIGHT)
+                new_page = out_doc.new_page(width=target_w, height=target_h)
                 
             page = doc[page_num]
             zoom_matrix = fitz.Matrix(2, 2)
@@ -84,7 +94,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc):
             target_rect = grid_rects[current_rect_idx]
             new_page.insert_image(target_rect, stream=pix.tobytes(), keep_proportion=True)
             
-            # Adaptive font sizing to prevent watermarks from clobbering tiny grids
             stamp_font = 6 if n_up >= 9 else 10
             new_page.insert_text((target_rect.x0 + 4, target_rect.y0 + 12), custom_watermark, fontsize=stamp_font, color=(1, 0, 0))
             
@@ -102,6 +111,7 @@ def process_pdf_endpoint():
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     pages_to_keep_str = request.form.get('pages_to_keep', '')
     n_up = int(request.form.get('n_up', 1))
+    orientation = request.form.get('orientation', 'portrait') # Catch orientation variable
     
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -116,7 +126,7 @@ def process_pdf_endpoint():
         else:
             page_indices = list(range(len(doc)))
             
-        process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc)
+        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc)
             
         output_stream = io.BytesIO()
         out_doc.save(output_stream)
@@ -138,6 +148,7 @@ def merge_pdfs_endpoint():
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     page_maps = request.form.getlist('page_maps')
     n_up = int(request.form.get('n_up', 1))
+    orientation = request.form.get('orientation', 'portrait') # Catch orientation variable
     
     if not files or files[0].filename == '':
         return jsonify({"error": "No selected files"}), 400
@@ -154,7 +165,7 @@ def merge_pdfs_endpoint():
             else:
                 page_indices = list(range(len(doc)))
             
-            process_pdf_pages(doc, page_indices, custom_watermark, n_up, out_doc)
+            process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, out_doc)
             doc.close()
             
         output_stream = io.BytesIO()

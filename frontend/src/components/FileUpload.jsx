@@ -9,6 +9,9 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
+  // NEW: Platform State for Dynamic N-Up Layouts
+  const [nUp, setNUp] = useState(1);
+
   // States for the Visual Page Manager
   const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
   const [pageMaps, setPageMaps] = useState({}); // Stores configuration arrays per file ID
@@ -132,6 +135,7 @@ export function FileUpload() {
     formData.append('file', currentFile);
     formData.append('watermark', watermark);
     formData.append('pages_to_keep', explicitPages);
+    formData.append('n_up', nUp); // Appending dynamic layout multiplier to backend
 
     const progressInterval = setInterval(() => {
       setFiles(prev => prev.map(f => (f.id === fileId && f.status === 'processing' && f.progress < 85) 
@@ -162,6 +166,7 @@ export function FileUpload() {
     const formData = new FormData();
     files.forEach(f => formData.append('files', f.file)); 
     formData.append('watermark', watermark);
+    formData.append('n_up', nUp); // Appending dynamic layout multiplier to batch config
 
     // Build matching ordered array parameters for the backend loop
     files.forEach(f => {
@@ -214,13 +219,34 @@ export function FileUpload() {
   return (
     <div className="w-full max-w-2xl mx-auto mt-8 px-4">
       
-      {/* 4. Global Configuration Input */}
-      <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
-        <input 
-          type="text" value={watermark} onChange={(e) => setWatermark(e.target.value)} disabled={isGlobalProcessing}
-          className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-        />
+      {/* Configuration Control Panel Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
+          <input 
+            type="text" value={watermark} onChange={(e) => setWatermark(e.target.value)} disabled={isGlobalProcessing}
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+          />
+        </div>
+
+        {/* Master Scalable N-Up Grid Selector Component */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Layout Optimization (N-Up)</label>
+          <select 
+            value={nUp} onChange={(e) => setNUp(parseInt(e.target.value))} disabled={isGlobalProcessing}
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all"
+          >
+            <option value="1">1 Slide per page (Standard)</option>
+            <option value="2">2 Slides per A4 Page (Portrait Stack)</option>
+            <option value="3">3 Slides per A4 Page (Vertical Stack - Notes Base)</option>
+            <option value="4">4 Slides per A4 Page (2x2 Matrix Grid)</option>
+            <option value="6">6 Slides per A4 Page (3x2 Matrix Grid)</option>
+            <option value="8">8 Slides per A4 Page (4x2 Matrix Grid)</option>
+            <option value="9">9 Slides per A4 Page (3x3 Matrix Grid)</option>
+            <option value="12">12 Slides per A4 Page (4x3 Matrix Grid)</option>
+            <option value="16">16 Slides per A4 Page (4x4 Matrix Grid - Extreme Save)</option>
+          </select>
+        </div>
       </div>
 
       {/* Dropzone Section */}
@@ -321,7 +347,7 @@ export function FileUpload() {
             onClick={allCompleted ? () => setFiles([]) : handleProcessAll} disabled={isGlobalProcessing || files.length === 0}
             className={`w-full py-3 font-bold rounded-lg transition-all ${allCompleted ? "bg-gray-900 dark:bg-white text-white dark:text-gray-900" : "bg-blue-600 hover:bg-blue-700 text-white shadow-md"}`}
           >
-            {allCompleted ? 'Clear Queue' : isMerging && files.length > 1 ? `Merge & Invert ${files.length} PDFs` : 'Invert PDFs separately'}
+            {allCompleted ? 'Clear Queue' : isMerging && files.length > 1 ? `Merge, Optimize & Invert ${files.length} PDFs` : 'Invert & Optimize PDFs'}
           </button>
         </div>
       )}
