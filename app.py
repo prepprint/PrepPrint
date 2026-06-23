@@ -3,6 +3,7 @@ import fitz  # PyMuPDF
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 import io
+import traceback
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -93,11 +94,11 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect = fitz.Rect(0, 0, w, h)
                 new_page = out_doc.new_page(width=w, height=h)
                 
-            new_page.insert_image(target_rect, stream=pix.tobytes())
+            # FIXED: Explicitly encoding stream snapshot as high-fidelity PNG bytes
+            new_page.insert_image(target_rect, stream=pix.tobytes("png"))
             new_page.insert_text((target_rect.x0 + 20, 40), custom_watermark, fontsize=18, color=(1, 0, 0))
         return 0, None
     else:
-        # FIX: Pre-initialize layout coordinates immediately for carried-over page state tokens
         is_odd_sheet = (len(out_doc) % 2 == 0)
         grid_rects, max_per_page, target_w, target_h = get_grid_layout(
             n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet
@@ -120,7 +121,8 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             pix.invert_irect(pix.irect)
             
             target_rect = grid_rects[current_rect_idx]
-            new_page.insert_image(target_rect, stream=pix.tobytes(), keep_proportion=True)
+            # FIXED: Explicitly encoding stream snapshot as high-fidelity PNG bytes
+            new_page.insert_image(target_rect, stream=pix.tobytes("png"), keep_proportion=True)
             
             stamp_font = 6 if n_up >= 9 else 10
             new_page.insert_text((target_rect.x0 + 4, target_rect.y0 + 12), custom_watermark, fontsize=stamp_font, color=(1, 0, 0))
@@ -168,7 +170,8 @@ def process_pdf_endpoint():
         
         return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{file.filename}", mimetype='application/pdf')
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print("!!! DETECTED CRITICAL CRASH IN PROCESS-PDF ENDPOINT !!!")
+        traceback.print_exc()
         return jsonify({"error": "Internal Server Error"}), 500
 
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
@@ -213,7 +216,8 @@ def merge_pdfs_endpoint():
         
         return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
     except Exception as e:
-        print(f"Merge Error: {str(e)}")
+        print("!!! DETECTED CRITICAL CRASH IN MERGE-PDFS ENDPOINT !!!")
+        traceback.print_exc()
         return jsonify({"error": "Internal Server Error during merging"}), 500
 
 if __name__ == '__main__':
