@@ -1,0 +1,15 @@
+# --- Python Backend ---
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# --- React Frontend ---
+node_modules/
+dist/
+.next/
+
+# --- Mac / System Files ---
+.DS_Store

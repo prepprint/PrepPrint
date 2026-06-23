@@ -20,6 +20,10 @@ def process_pdf_endpoint():
         return jsonify({"error": "No file part provided in the request"}), 400
     
     file = request.files['file']
+    
+    # Catch the custom watermark from React, or default to PrepPrint
+    custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
+    
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
 
@@ -35,7 +39,7 @@ def process_pdf_endpoint():
             zoom_matrix = fitz.Matrix(2, 2) # 2x zoom for crisp text
             pix = page.get_pixmap(matrix=zoom_matrix)
             
-            # 2. INVERT THE COLORS (Dark mode to Light mode, or vice versa)
+            # 2. INVERT THE COLORS
             pix.invert_irect(pix.irect)
             
             # 3. Create a blank page in our new PDF
@@ -44,11 +48,11 @@ def process_pdf_endpoint():
             # 4. Paste the inverted snapshot onto the new page
             new_page.insert_image(page.rect, stream=pix.tobytes())
             
-            # 5. Add a highly visible PrepPrint watermark
+            # 5. Add a highly visible Custom Watermark
             watermark_rect = fitz.Rect(new_page.rect.width - 200, new_page.rect.height - 30, new_page.rect.width - 10, new_page.rect.height - 10)
             new_page.insert_textbox(
                 watermark_rect, 
-                "Optimized by PrepPrint.in", 
+                custom_watermark, 
                 fontsize=12, 
                 color=(1, 0, 0), # Red color so it's obvious during testing
                 align=fitz.TEXT_ALIGN_RIGHT
