@@ -18,7 +18,6 @@ PORT = int(os.getenv("PORT", 5000))
 A4_PORTRAIT_W = 595
 A4_PORTRAIT_H = 842
 
-# Scalable Row-and-Column configurations for Portrait Mode
 PORTRAIT_GRID_MAP = {
     1: (1, 1),
     2: (2, 1),   
@@ -43,7 +42,6 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
         page_h = A4_PORTRAIT_H
         rows, cols = PORTRAIT_GRID_MAP.get(n_up, (1, 1))
 
-    # Isolate binding offsets
     avail_w = page_w
     h_offset = 0
     
@@ -94,9 +92,9 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect = fitz.Rect(0, 0, w, h)
                 new_page = out_doc.new_page(width=w, height=h)
                 
-            # FIXED: Explicitly encoding stream snapshot as high-fidelity PNG bytes
             new_page.insert_image(target_rect, stream=pix.tobytes("png"))
-            new_page.insert_text((target_rect.x0 + 20, 40), custom_watermark, fontsize=18, color=(1, 0, 0))
+            # FIXED: Moved single-page watermark to the bottom-left corner
+            new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
         return 0, None
     else:
         is_odd_sheet = (len(out_doc) % 2 == 0)
@@ -113,6 +111,8 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                     n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet
                 )
                 new_page = out_doc.new_page(width=target_w, height=target_h)
+                # FIXED: Stamping the watermark exactly ONCE at the bottom-left of the fresh A4 sheet
+                new_page.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
                 current_rect_idx = 0
                 
             page = doc[page_num]
@@ -121,11 +121,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             pix.invert_irect(pix.irect)
             
             target_rect = grid_rects[current_rect_idx]
-            # FIXED: Explicitly encoding stream snapshot as high-fidelity PNG bytes
             new_page.insert_image(target_rect, stream=pix.tobytes("png"), keep_proportion=True)
-            
-            stamp_font = 6 if n_up >= 9 else 10
-            new_page.insert_text((target_rect.x0 + 4, target_rect.y0 + 12), custom_watermark, fontsize=stamp_font, color=(1, 0, 0))
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:

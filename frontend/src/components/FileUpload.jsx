@@ -1,6 +1,6 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors } from 'lucide-react';
+import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors, Smile } from 'lucide-react';
 
 export function FileUpload() {
   const [files, setFiles] = useState([]);
@@ -9,7 +9,7 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // Platform Feature Settings Configuration
+  // Platform Layout Settings
   const [nUp, setNUp] = useState(1);
   const [orientation, setOrientation] = useState('portrait');
   const [gutterMargin, setGutterMargin] = useState('none');
@@ -22,6 +22,10 @@ export function FileUpload() {
   // Module Chapter Splitter Local Inputs
   const [splitStart, setSplitStart] = useState('');
   const [splitEnd, setSplitEnd] = useState('');
+
+  // --- EXAM RAGE GAME ENGINE REFERENCES ---
+  const canvasRef = useRef(null);
+  const [gameScore, setGameScore] = useState(0);
 
   useEffect(() => {
     if (window.pdfjsLib) {
@@ -42,6 +46,113 @@ export function FileUpload() {
     }
   }, []);
 
+  // HTML5 loading game loop context lifecycle
+  useEffect(() => {
+    if (!isGlobalProcessing || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    let animationFrameId;
+
+    // Set canvas resolution dimensions
+    canvas.width = 500;
+    canvas.height = 300;
+
+    let items = [];
+    const targetEmojis = ['⏰', '🧮', '📚', '📝', '✏️'];
+    let scoreCounter = 0;
+
+    class TargetItem {
+      constructor() {
+        this.x = Math.random() * (canvas.width - 40) + 20;
+        this.y = -20;
+        this.speed = Math.random() * 2 + 1.5;
+        this.emoji = targetEmojis[Math.floor(Math.random() * targetEmojis.length)];
+        this.radius = 18;
+        this.isSliced = false;
+      }
+      update() {
+        this.y += this.speed;
+      }
+      draw() {
+        ctx.font = this.isSliced ? '14px sans-serif' : '24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        if (this.isSliced) {
+          // Draw sliced item separation offset effect
+          ctx.fillText(this.emoji, this.x - 10, this.y);
+          ctx.fillText(this.emoji, this.x + 10, this.y);
+        } else {
+          ctx.fillText(this.emoji, this.x, this.y);
+        }
+      }
+    }
+
+    const checkSliceInteraction = (clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = ((clientX - rect.left) / rect.width) * canvas.width;
+      const mouseY = ((clientY - rect.top) / rect.height) * canvas.height;
+
+      items.forEach(item => {
+        if (!item.isSliced) {
+          const dist = Math.hypot(item.x - mouseX, item.y - mouseY);
+          if (dist < item.radius + 15) {
+            item.isSliced = true;
+            scoreCounter += 10;
+            setGameScore(scoreCounter);
+          }
+        }
+      });
+    };
+
+    const handleMouseMove = (e) => {
+      if (e.buttons === 1 || e.type === 'touchmove') {
+        const point = e.touches ? e.touches[0] : e;
+        checkSliceInteraction(point.clientX, point.clientY);
+      }
+    };
+
+    const handleMouseDown = (e) => {
+      checkSliceInteraction(e.clientX, e.clientY);
+    };
+
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('touchmove', handleMouseMove);
+
+    // Main Game Rendering Loop
+    const gameLoop = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Background ambient container accents
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.03)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (Math.random() < 0.03 && items.length < 8) {
+        items.push(new TargetItem());
+      }
+
+      items.forEach((item, index) => {
+        item.update();
+        item.draw();
+        if (item.y > canvas.height + 20) {
+          items.splice(index, 1);
+        }
+      });
+
+      animationFrameId = requestAnimationFrame(gameLoop);
+    };
+
+    gameLoop();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      canvas.removeEventListener('mousemove', handleMouseMove);
+      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('touchmove', handleMouseMove);
+    };
+  }, [isGlobalProcessing]);
+
   const generateThumbnails = async (fileObj, id) => {
     if (!window.pdfjsLib) return;
     try {
@@ -61,12 +172,7 @@ export function FileUpload() {
           canvas.width = viewport.width;
 
           await page.render({ canvasContext: context, viewport: viewport }).promise;
-          pagesArray.push({
-            index: i - 1, 
-            displayNum: i,
-            thumbnail: canvas.toDataURL(),
-            keep: true 
-          });
+          pagesArray.push({ index: i - 1, displayNum: i, thumbnail: canvas.toDataURL(), keep: true });
         }
         setPageMaps(prev => ({ ...prev, [id]: pagesArray }));
       };
@@ -114,7 +220,6 @@ export function FileUpload() {
     });
   };
 
-  // NEW: Fast Module Slicing Action Solver
   const applyRangeSplit = () => {
     if (!activeModalFile || !splitStart || !splitEnd) return;
     const start = parseInt(splitStart);
@@ -125,7 +230,6 @@ export function FileUpload() {
       const currentPages = prev[activeModalFile.id] ? [...prev[activeModalFile.id]] : [];
       const updatedPages = currentPages.map(page => ({
         ...page,
-        // Mark keep true strictly if page matches designated range bounds
         keep: page.displayNum >= start && page.displayNum <= end
       }));
       return { ...prev, [activeModalFile.id]: updatedPages };
@@ -146,7 +250,7 @@ export function FileUpload() {
     formData.append('pages_to_keep', explicitPages);
     formData.append('n_up', nUp);
     formData.append('orientation', orientation);
-    formData.append('gutter_margin', gutterMargin); // Dispatching gutter configuration values
+    formData.append('gutter_margin', gutterMargin);
 
     const progressInterval = setInterval(() => {
       setFiles(prev => prev.map(f => (f.id === fileId && f.status === 'processing' && f.progress < 85) ? { ...f, progress: f.progress + 1 } : f));
@@ -166,12 +270,12 @@ export function FileUpload() {
       updateFile({ status: 'success', progress: 100, statusText: 'Complete!' });
     } catch (err) {
       clearInterval(progressInterval);
-      updateFile({ status: 'error', statusText: 'Failed.' });
+      updateFile({ status: 'error', progress: 0, statusText: 'Failed.' });
     }
   };
 
   const processMergedFiles = async () => {
-    setFiles(prev => prev.map(f => ({ ...f, status: 'processing', progress: 15, statusText: 'Bundling Master Stream...' })));
+    setFiles(prev => prev.map(f => ({ ...f, status: 'processing', progress: 15, statusText: 'Processing...' })));
     
     const formData = new FormData();
     files.forEach(f => formData.append('files', f.file)); 
@@ -186,7 +290,7 @@ export function FileUpload() {
     });
 
     const progressInterval = setInterval(() => {
-      setFiles(prev => prev.map(f => (f.status === 'processing' && f.progress < 85) ? { ...f, progress: f.progress + 1 } : f));
+      setFiles(prev => prev.map(f => (f.status === 'processing' && f.progress < 85) ? { ...f, progress: f.progress + 1, statusText: 'Compiling layout...' } : f));
     }, 800);
 
     try {
@@ -203,11 +307,12 @@ export function FileUpload() {
       setFiles(prev => prev.map(f => ({ ...f, status: 'success', progress: 100, statusText: 'Merged!' })));
     } catch (err) {
       clearInterval(progressInterval);
-      setFiles(prev => prev.map(f => ({ ...f, status: 'error', statusText: 'Failed.' })));
+      setFiles(prev => prev.map(f => ({ ...f, status: 'error', progress: 0, statusText: 'Failed.' })));
     }
   };
 
   const handleProcessAll = async () => {
+    setGameScore(0); // Reset game score counter session state
     setIsGlobalProcessing(true);
     if (isMerging && files.length > 1) {
       await processMergedFiles();
@@ -225,9 +330,9 @@ export function FileUpload() {
   const allCompleted = hasFiles && files.every(f => f.status === 'success');
 
   return (
-    <div className="w-full max-w-4xl mx-auto mt-8 px-4">
+    <div className="w-full max-w-5xl mx-auto mt-8 px-4">
       
-      {/* 4-Column Balanced UI Settings Dashboard Panel Layout */}
+      {/* Configuration Controls Dashboard */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
@@ -266,7 +371,6 @@ export function FileUpload() {
           </select>
         </div>
 
-        {/* NEW UI COMPONENT: Binding Margin Configuration Element */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Spiral Gutter Margin</label>
           <select 
@@ -280,7 +384,7 @@ export function FileUpload() {
         </div>
       </div>
 
-      {/* Dropzone */}
+      {/* Dropzone Drop Boundary Section */}
       {!pdfJsLoaded ? (
         <div className="h-40 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-800/10">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500 mr-2" />
@@ -294,7 +398,7 @@ export function FileUpload() {
         </div>
       )}
 
-      {/* Queue View Container */}
+      {/* Queue Processing Blocks Container */}
       {hasFiles && (
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 shadow-sm transition-colors">
           {files.length > 1 && (
@@ -354,6 +458,42 @@ export function FileUpload() {
         </div>
       )}
 
+      {/* --- NEW GAME COMPONENT OVERLAY: THE EXAM RAGE SANDBOX OVERLAY CONTAINER --- */}
+      {isGlobalProcessing && (
+        <div className="fixed inset-0 z-50 bg-gray-950/80 backdrop-blur-md flex flex-col items-center justify-center p-4">
+          <div className="w-full max-w-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl p-6 flex flex-col items-center">
+            
+            <div className="w-full flex justify-between items-center mb-4 pb-2 border-b dark:border-gray-800">
+              <div className="flex items-center space-x-2">
+                <Smile className="w-5 h-5 text-blue-500 animate-bounce" />
+                <h3 className="font-extrabold text-gray-900 dark:text-white text-base">Exam Rage: Stress Reliever</h3>
+              </div>
+              <div className="bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 text-xs font-black px-3 py-1 rounded-full shadow-sm">
+                Score: {gameScore}
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-400 text-center mb-4">
+              Hold click & drag your cursor across the panel to slash falling modules, alarms, and text books! 
+            </p>
+
+            <div className="relative border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950 rounded-xl overflow-hidden cursor-crosshair shadow-inner">
+              <canvas ref={canvasRef} className="block w-full max-w-full aspect-[5/3]" />
+            </div>
+
+            <div className="w-full mt-6 space-y-2">
+              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 font-bold px-1">
+                <span>Compiling Optimization Matrix Pipelines...</span>
+              </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden shadow-inner">
+                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full animate-pulse style-loader" style={{ width: '65%' }}></div>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+      )}
+
       {/* FULL-SCREEN INTERACTIVE WORKSPACE VIEW MODAL */}
       {activeModalFile && pageMaps[activeModalFile.id] && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -367,7 +507,6 @@ export function FileUpload() {
                 </p>
               </div>
 
-              {/* NEW TOOLBAR ELEMENT: Quick Chapter Range Slicer Module */}
               <div className="flex items-center space-x-2 bg-white dark:bg-gray-900 p-1.5 rounded-lg border border-gray-200 dark:border-gray-800 self-start md:self-auto">
                 <div className="flex items-center space-x-1 text-xs text-gray-500 font-medium pl-1">
                   <Scissors className="w-3.5 h-3.5 text-blue-500" />
@@ -381,12 +520,7 @@ export function FileUpload() {
                   type="number" placeholder="To" value={splitEnd} onChange={(e) => setSplitEnd(e.target.value)}
                   className="w-14 px-2 py-1 text-xs text-center border border-gray-300 dark:border-gray-700 bg-transparent rounded text-gray-900 dark:text-white outline-none focus:border-blue-500"
                 />
-                <button 
-                  onClick={applyRangeSplit}
-                  className="px-2.5 py-1 text-xs font-bold text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors"
-                >
-                  Keep Range Only
-                </button>
+                <button onClick={applyRangeSplit} className="px-2.5 py-1 text-xs font-bold text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors">Keep Range Only</button>
               </div>
 
               <button onClick={() => setActiveModalFile(null)} className="px-4 py-2 bg-gray-900 text-white dark:bg-white dark:text-gray-900 font-bold rounded-lg text-sm shadow self-end md:self-auto">Apply Layout & Close</button>
