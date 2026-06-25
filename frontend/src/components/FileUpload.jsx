@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors, Smile } from 'lucide-react';
+import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors, Zap } from 'lucide-react';
+import AdBanner from './AdBanner';
 
 export function FileUpload() {
   const [files, setFiles] = useState([]);
@@ -23,7 +24,7 @@ export function FileUpload() {
   const [splitStart, setSplitStart] = useState('');
   const [splitEnd, setSplitEnd] = useState('');
 
-  // --- EXAM RAGE GAME ENGINE REFERENCES ---
+  // Exam Rage Arcade Game References
   const canvasRef = useRef(null);
   const [gameScore, setGameScore] = useState(0);
 
@@ -46,7 +47,7 @@ export function FileUpload() {
     }
   }, []);
 
-  // HTML5 loading game loop context lifecycle
+  // --- LOW-OVERHEAD ULTRA PERFORMANCE GAME ENGINE ---
   useEffect(() => {
     if (!isGlobalProcessing || !canvasRef.current) return;
 
@@ -54,37 +55,115 @@ export function FileUpload() {
     const ctx = canvas.getContext('2d');
     let animationFrameId;
 
-    // Set canvas resolution dimensions
     canvas.width = 500;
     canvas.height = 300;
 
     let items = [];
+    let particles = [];
+    let splats = [];       
+    let combos = [];       
+    let slashTrail = [];   
     const targetEmojis = ['⏰', '🧮', '📚', '📝', '✏️'];
     let scoreCounter = 0;
+    let sliceTimestamps = [];
 
     class TargetItem {
       constructor() {
-        this.x = Math.random() * (canvas.width - 40) + 20;
-        this.y = -20;
-        this.speed = Math.random() * 2 + 1.5;
+        this.x = Math.random() * (canvas.width * 0.6) + canvas.width * 0.2;
+        this.y = canvas.height + 20;
+        this.vx = (Math.random() - 0.5) * 3; 
+        this.vy = -(Math.random() * 3 + 7); 
+        this.gravity = 0.16;
+        this.rotation = Math.random() * Math.PI;
+        this.vRot = (Math.random() - 0.5) * 0.08;
         this.emoji = targetEmojis[Math.floor(Math.random() * targetEmojis.length)];
-        this.radius = 18;
+        this.radius = 20;
         this.isSliced = false;
+        this.color = ['#3b82f6', '#ec4899', '#10b981', '#f59e0b', '#8b5cf6'][Math.floor(Math.random() * 5)];
       }
       update() {
-        this.y += this.speed;
+        this.vy += this.gravity; 
+        this.x += this.vx;
+        this.y += this.vy;
+        this.rotation += this.vRot;
       }
       draw() {
-        ctx.font = this.isSliced ? '14px sans-serif' : '24px sans-serif';
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.rotation);
+        
+        ctx.font = '28px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        
         if (this.isSliced) {
-          // Draw sliced item separation offset effect
-          ctx.fillText(this.emoji, this.x - 10, this.y);
-          ctx.fillText(this.emoji, this.x + 10, this.y);
+          ctx.globalAlpha = 0.4;
+          ctx.fillText(this.emoji, -12, -4);
+          ctx.fillText(this.emoji, 12, 4);
         } else {
-          ctx.fillText(this.emoji, this.x, this.y);
+          ctx.fillText(this.emoji, 0, 0);
         }
+        ctx.restore();
+      }
+    }
+
+    class NeonSplat {
+      constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.radius = Math.random() * 12 + 10;
+        this.alpha = 0.5;
+      }
+      update() { this.alpha -= 0.006; }
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    class FloatingCombo {
+      constructor(x, y, count) {
+        this.x = x;
+        this.y = y - 15;
+        this.count = count;
+        this.alpha = 1.0;
+      }
+      update() { this.y -= 1; this.alpha -= 0.03; }
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.font = 'bold 18px sans-serif';
+        ctx.fillStyle = '#f59e0b';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${this.count}x COMBO!`, this.x, this.y);
+        ctx.restore();
+      }
+    }
+
+    class BurstParticle {
+      constructor(x, y, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = (Math.random() - 0.5) * 6;
+        this.vy = (Math.random() - 0.5) * 6;
+        this.alpha = 1;
+        this.decay = Math.random() * 0.05 + 0.03;
+        this.size = Math.random() * 3 + 2;
+        this.color = color;
+      }
+      update() { this.x += this.vx; this.y += this.vy; this.alpha -= this.decay; }
+      draw() {
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.x, this.y, this.size, this.size);
+        ctx.restore();
       }
     }
 
@@ -93,53 +172,83 @@ export function FileUpload() {
       const mouseX = ((clientX - rect.left) / rect.width) * canvas.width;
       const mouseY = ((clientY - rect.top) / rect.height) * canvas.height;
 
+      slashTrail.push({ x: mouseX, y: mouseY, alpha: 1.0 });
+
+      const now = Date.now();
+      let slicedThisFrame = 0;
+      let lastX = mouseX, lastY = mouseY;
+
       items.forEach(item => {
         if (!item.isSliced) {
-          const dist = Math.hypot(item.x - mouseX, item.y - mouseY);
-          if (dist < item.radius + 15) {
+          // LOW OVERHEAD: Fast box-radius proximity shortcut checks instead of expensive trigonometry loops
+          if (Math.abs(item.x - mouseX) < item.radius + 8 && Math.abs(item.y - mouseY) < item.radius + 8) {
             item.isSliced = true;
-            scoreCounter += 10;
-            setGameScore(scoreCounter);
+            slicedThisFrame++;
+            lastX = item.x; lastY = item.y;
+            sliceTimestamps.push(now);
+            splats.push(new NeonSplat(item.x, item.y, item.color));
+
+            for (let i = 0; i < 8; i++) {
+              particles.push(new BurstParticle(item.x, item.y, item.color));
+            }
           }
         }
       });
+
+      if (slicedThisFrame > 0) {
+        sliceTimestamps = sliceTimestamps.filter(t => now - t < 600);
+        if (sliceTimestamps.length >= 3) {
+          combos.push(new FloatingCombo(lastX, lastY, sliceTimestamps.length));
+          scoreCounter += 25;
+        } else {
+          scoreCounter += 10;
+        }
+        setGameScore(scoreCounter);
+      }
     };
 
     const handleMouseMove = (e) => {
+      const point = e.touches ? e.touches[0] : e;
       if (e.buttons === 1 || e.type === 'touchmove') {
-        const point = e.touches ? e.touches[0] : e;
         checkSliceInteraction(point.clientX, point.clientY);
       }
     };
 
-    const handleMouseDown = (e) => {
-      checkSliceInteraction(e.clientX, e.clientY);
-    };
-
     canvas.addEventListener('mousemove', handleMouseMove);
-    canvas.addEventListener('mousedown', handleMouseDown);
-    canvas.addEventListener('touchmove', handleMouseMove);
+    canvas.addEventListener('mousedown', handleMouseMove);
+    canvas.addEventListener('touchmove', handleMouseMove, { passive: true });
 
-    // Main Game Rendering Loop
     const gameLoop = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Background ambient container accents
-      ctx.fillStyle = 'rgba(59, 130, 246, 0.03)';
+      ctx.fillStyle = '#0f172a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (Math.random() < 0.03 && items.length < 8) {
-        items.push(new TargetItem());
-      }
+      splats.forEach((s, idx) => { s.update(); s.draw(); if (s.alpha <= 0) splats.splice(idx, 1); });
+
+      if (Math.random() < 0.025 && items.length < 4) items.push(new TargetItem());
 
       items.forEach((item, index) => {
-        item.update();
-        item.draw();
-        if (item.y > canvas.height + 20) {
-          items.splice(index, 1);
-        }
+        item.update(); item.draw();
+        if (item.y > canvas.height + 30) items.splice(index, 1);
       });
 
+      particles.forEach((p, idx) => { p.update(); p.draw(); if (p.alpha <= 0) particles.splice(idx, 1); });
+      combos.forEach((c, idx) => { c.update(); c.draw(); if (c.alpha <= 0) combos.splice(idx, 1); });
+
+      if (slashTrail.length > 1) {
+        ctx.save();
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.moveTo(slashTrail[0].x, slashTrail[0].y);
+        for (let k = 1; k < slashTrail.length; k++) {
+          ctx.lineTo(slashTrail[k].x, slashTrail[k].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      slashTrail.forEach((node, idx) => { node.alpha -= 0.12; if (node.alpha <= 0) slashTrail.splice(idx, 1); });
       animationFrameId = requestAnimationFrame(gameLoop);
     };
 
@@ -148,7 +257,7 @@ export function FileUpload() {
     return () => {
       cancelAnimationFrame(animationFrameId);
       canvas.removeEventListener('mousemove', handleMouseMove);
-      canvas.removeEventListener('mousedown', handleMouseDown);
+      canvas.removeEventListener('mousedown', handleMouseMove);
       canvas.removeEventListener('touchmove', handleMouseMove);
     };
   }, [isGlobalProcessing]);
@@ -312,7 +421,7 @@ export function FileUpload() {
   };
 
   const handleProcessAll = async () => {
-    setGameScore(0); // Reset game score counter session state
+    setGameScore(0); 
     setIsGlobalProcessing(true);
     if (isMerging && files.length > 1) {
       await processMergedFiles();
@@ -332,6 +441,9 @@ export function FileUpload() {
   return (
     <div className="w-full max-w-5xl mx-auto mt-8 px-4">
       
+      {/* 🟢 TOP AD BANNER PLACEMENT 🟢 */}
+      <AdBanner dataAdSlot="0000000000" minHeight="90px" />
+
       {/* Configuration Controls Dashboard */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div>
@@ -383,8 +495,58 @@ export function FileUpload() {
           </select>
         </div>
       </div>
+{/* REAL-TIME MINI PREVIEW SECTION */}
+<div className="col-span-1 sm:col-span-2 lg:col-span-4 mt-2 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-gray-200 dark:border-slate-800">
+  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div className="min-w-0">
+      <h4 className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-slate-400 flex items-center gap-1.5">
+        <Zap className="w-3.5 h-3.5 text-blue-500" />
+        Live Print Sheet Preview
+      </h4>
+      <p className="text-[11px] text-gray-400 mt-0.5">
+        Showing arrangement for A4 Page (Current Selection: <span className="font-bold text-blue-500">{nUp}-Up</span>)
+      </p>
+    </div>
 
-      {/* Dropzone Drop Boundary Section */}
+    {/* Dynamic A4 Canvas Wrapper */}
+    <div className="flex-shrink-0 bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 shadow-md rounded transition-all duration-200 p-2 flex items-center justify-center relative overflow-hidden"
+      style={{
+        width: orientation === 'landscape' ? '110px' : '78px',
+        height: orientation === 'landscape' ? '78px' : '110px',
+        // Responsive edge padding rule modifications based on Gutter choices
+        paddingLeft: gutterMargin === 'left' || gutterMargin === 'alternating' ? '12px' : '6px'
+      }}
+    >
+      {/* Visual Spiral Binding Holes Gutter Line indicator */}
+      {(gutterMargin === 'left' || gutterMargin === 'alternating') && (
+        <div className="absolute left-1 top-0 bottom-0 w-1.5 border-r border-dashed border-gray-300 dark:border-slate-800 flex flex-col justify-around py-1">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="w-1 h-1 rounded-full bg-gray-300 dark:bg-slate-700 mx-auto" />
+          ))}
+        </div>
+      )}
+
+      {/* Grid Layout Solver */}
+      <div className="w-full h-full grid gap-1 transition-all duration-200"
+        style={{
+          gridTemplateColumns: `repeat(${
+            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 2 : 1) : nUp === 3 ? 1 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 3 : 2) : nUp === 8 ? (orientation === 'landscape' ? 4 : 2) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 4 : 3) : 4
+          }, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${
+            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 1 : 2) : nUp === 3 ? 3 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 2 : 3) : nUp === 8 ? (orientation === 'landscape' ? 2 : 4) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 3 : 4) : 4
+          }, minmax(0, 1fr))`
+        }}
+      >
+        {[...Array(nUp)].map((_, idx) => (
+          <div key={idx} className="bg-blue-500/20 dark:bg-blue-500/10 border border-blue-500/40 rounded flex items-center justify-center relative">
+            <span className="text-[8px] font-black text-blue-500/60">{idx + 1}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</div>
+      {/* Dropzone Boundary Section */}
       {!pdfJsLoaded ? (
         <div className="h-40 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-800/10">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500 mr-2" />
@@ -458,35 +620,31 @@ export function FileUpload() {
         </div>
       )}
 
-      {/* --- NEW GAME COMPONENT OVERLAY: THE EXAM RAGE SANDBOX OVERLAY CONTAINER --- */}
+      {/* GAME OVERLAY CONTAINER */}
       {isGlobalProcessing && (
-        <div className="fixed inset-0 z-50 bg-gray-950/80 backdrop-blur-md flex flex-col items-center justify-center p-4">
-          <div className="w-full max-w-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl p-6 flex flex-col items-center">
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-4 select-none">
+          <div className="w-full max-w-xl bg-slate-900/40 border border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col items-center backdrop-blur-sm">
             
-            <div className="w-full flex justify-between items-center mb-4 pb-2 border-b dark:border-gray-800">
+            <div className="w-full flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2">
-                <Smile className="w-5 h-5 text-blue-500 animate-bounce" />
-                <h3 className="font-extrabold text-gray-900 dark:text-white text-base">Exam Rage: Stress Reliever</h3>
+                <Zap className="w-4 h-4 text-blue-500 animate-bounce" />
+                <h3 className="font-extrabold text-slate-200 text-sm tracking-wide uppercase">Exam Rage: Performance Core</h3>
               </div>
-              <div className="bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 text-xs font-black px-3 py-1 rounded-full shadow-sm">
-                Score: {gameScore}
+              <div className="bg-blue-500/10 text-blue-400 text-xs font-black px-3 py-1 rounded-lg tracking-wider">
+                SCORE: {gameScore}
               </div>
             </div>
 
-            <p className="text-xs text-gray-400 text-center mb-4">
-              Hold click & drag your cursor across the panel to slash falling modules, alarms, and text books! 
-            </p>
-
-            <div className="relative border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950 rounded-xl overflow-hidden cursor-crosshair shadow-inner">
-              <canvas ref={canvasRef} className="block w-full max-w-full aspect-[5/3]" />
+            <div className="relative border border-slate-800/80 bg-slate-950 rounded-xl overflow-hidden cursor-crosshair shadow-inner w-full">
+              <canvas ref={canvasRef} className="block w-full" />
             </div>
 
-            <div className="w-full mt-6 space-y-2">
-              <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 font-bold px-1">
-                <span>Compiling Optimization Matrix Pipelines...</span>
+            <div className="w-full mt-5 space-y-2">
+              <div className="flex justify-between text-[11px] text-slate-400 font-bold px-1 tracking-wide">
+                <span>Inverting Document Color Space...</span>
               </div>
-              <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden shadow-inner">
-                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-2 rounded-full animate-pulse style-loader" style={{ width: '65%' }}></div>
+              <div className="w-full bg-slate-950 border border-slate-800 rounded-full h-2 p-0.5 overflow-hidden">
+                <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-1 rounded-full animate-pulse" style={{ width: '75%' }}></div>
               </div>
             </div>
             
@@ -494,7 +652,7 @@ export function FileUpload() {
         </div>
       )}
 
-      {/* FULL-SCREEN INTERACTIVE WORKSPACE VIEW MODAL */}
+      {/* FULL-SCREEN WORKSPACE MODAL */}
       {activeModalFile && pageMaps[activeModalFile.id] && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-5xl h-[85vh] bg-white dark:bg-gray-950 rounded-2xl flex flex-col shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden animate-in fade-in zoom-in duration-150">
