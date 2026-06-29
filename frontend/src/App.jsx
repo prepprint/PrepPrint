@@ -4,6 +4,7 @@ import { FileUpload } from './components/FileUpload';
 import Compressor from './components/Compressor';
 import DocumentScanner from './components/DocumentScanner';
 import IdScanner from './components/IdScanner';
+import PortraitStudio from './components/PortraitStudio';
 import PrivacyPolicy from './components/PrivacyPolicy';
 import TermsOfService from './components/TermsOfService';
 
@@ -74,6 +75,7 @@ export default function App() {
          <Route path="/id-builder" element={<IdScanner />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
+            <Route path="/portrait-studio" element={<PortraitStudio />} />
           </Routes>
         </div>
 

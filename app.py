@@ -506,6 +506,69 @@ def scan_export_pdf():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# ==========================================
+# 🟢 PRO CUTOUT & ID STUDIO ENGINE
+# ==========================================
+from rembg import remove, new_session
+
+# Load the lightweight model to protect Render's RAM limits
+bg_session = new_session("u2netp")
+
+@app.route('/api/v1/studio/remove-bg', methods=['POST'])
+def remove_background():
+    try:
+        if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
+        file = request.files['file']
+        
+        img_bytes = file.read()
+        
+        # 🟢 AI Background Removal (Output is always transparent PNG)
+        output_bytes = remove(img_bytes, session=bg_session)
+        
+        return send_file(io.BytesIO(output_bytes), mimetype='image/png')
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/v1/studio/passport-sheet', methods=['POST'])
+def generate_passport_sheet():
+    try:
+        if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
+        file = request.files['file']
+        img_bytes = file.read()
+        
+        doc = fitz.open()
+        
+        # Standard 4x6 inch photo paper size in points
+        PAPER_W, PAPER_H = 288, 432
+        # Standard Passport Size: 3.5cm x 4.5cm (approx 99 x 127 points)
+        PHOTO_W, PHOTO_H = 99, 127
+        
+        page = doc.new_page(width=PAPER_W, height=PAPER_H)
+        
+        # Calculate grid for 6 photos on a 4x6 sheet (2 columns, 3 rows)
+        margin_x = (PAPER_W - (2 * PHOTO_W)) / 3
+        margin_y = (PAPER_H - (3 * PHOTO_H)) / 4
+        
+        for row in range(3):
+            for col in range(2):
+                x0 = margin_x + col * (PHOTO_W + margin_x)
+                y0 = margin_y + row * (PHOTO_H + margin_y)
+                
+                rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
+                page.insert_image(rect, stream=img_bytes)
+                # Draw a faint cut-line border
+                page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
+
+        output_stream = io.BytesIO()
+        doc.save(output_stream, garbage=4, deflate=True)
+        doc.close()
+        output_stream.seek(0)
+        
+        return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT, debug=(ENVIRONMENT == "development"))
