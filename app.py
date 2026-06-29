@@ -1,6 +1,6 @@
 import os
 import fitz  # PyMuPDF
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 import io
 import traceback
@@ -569,6 +569,26 @@ def generate_passport_sheet():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+# ==========================================
+# 🟢 REACT FRONTEND ROUTING (THE CATCH-ALL)
+# ==========================================
+
+# 1. Serve the static assets (CSS, JS, images)
+@app.route('/assets/<path:path>')
+def serve_assets(path):
+    return send_from_directory('frontend/dist/assets', path)
+
+# 2. The Catch-All Rule for React Router
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path):
+    # If the browser asks for a specific file that exists in the dist folder, give it
+    if path != "" and os.path.exists(f"frontend/dist/{path}"):
+        return send_from_directory('frontend/dist', path)
+    
+    # Otherwise, give them the main lobby (index.html) and let React handle it!
+    return send_from_directory('frontend/dist', 'index.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT, debug=(ENVIRONMENT == "development"))
