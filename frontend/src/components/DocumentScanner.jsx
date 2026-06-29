@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { UploadCloud, Crop, Image as ImageIcon, FileText, Printer, Check, Loader2, Trash2, Zap, SlidersHorizontal, Undo, Redo, RotateCw, Contrast, Type } from 'lucide-react';
+import { UploadCloud, Crop, Image as ImageIcon, FileText, Check, Loader2, Trash2, Zap, SlidersHorizontal, Undo, Redo, RotateCw, Contrast, Type, Search, Maximize, Scan } from 'lucide-react';
 
 export default function DocumentScanner() {
   const [assets, setAssets] = useState([]);
@@ -9,7 +9,7 @@ export default function DocumentScanner() {
   // UI States
   const [isUploading, setIsUploading] = useState(false);
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
-  const [includeWatermark, setIncludeWatermark] = useState(true); // 🟢 NEW TOGGLE STATE
+  const [includeWatermark, setIncludeWatermark] = useState(true);
   
   // Studio States
   const imgRef = useRef(null);
@@ -19,15 +19,18 @@ export default function DocumentScanner() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [mode, setMode] = useState('crop'); 
   const [sliderPos, setSliderPos] = useState(50);
-  const [selectedFilter, setSelectedFilter] = useState('color_enhanced');
+  
+  // 🟢 UPGRADE 1: Default to 'ocr' (Text Clear)
+  const [selectedFilter, setSelectedFilter] = useState('ocr');
+
+  // 🟢 UPGRADE 2: Magnifier Lens State
+  const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0 });
 
   useEffect(() => {
     if (!window.pdfjsLib) {
       const script = document.createElement('script');
       script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      script.onload = () => {
-        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      };
+      script.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; };
       document.body.appendChild(script);
     }
   }, []);
@@ -53,7 +56,6 @@ export default function DocumentScanner() {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
             
-            // 🟢 FIXED: Loop through EVERY page in the PDF
             for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
               const id = Math.random().toString(36).substring(7);
               const page = await pdf.getPage(pageNum);
@@ -67,68 +69,42 @@ export default function DocumentScanner() {
               const res = await fetch(previewUrl);
               const uploadBlob = await res.blob();
 
-              // Detect corners for this specific page
               let detectedCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
               try {
-                const fd = new FormData();
-                fd.append('file', uploadBlob);
+                const fd = new FormData(); fd.append('file', uploadBlob);
                 const cornerRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
-                if (cornerRes.ok) {
-                  const data = await cornerRes.json();
-                  if (data.corners) detectedCorners = data.corners;
-                }
+                if (cornerRes.ok) { const data = await cornerRes.json(); if (data.corners) detectedCorners = data.corners; }
               } catch (err) {}
 
               setAssets(prev => {
-                const newAssets = [...prev, { 
-                  id, file: uploadBlob, previewUrl, 
-                  name: `${file.name.replace('.pdf', '')}_Page_${pageNum}`, 
-                  corners: detectedCorners, history: [], historyIndex: -1 
-                }];
-                // Auto-select the very first page of the batch if nothing is active
-                if (prev.length === 0 && pageNum === 1) {
-                  setTimeout(() => setActiveAssetId(id), 0);
-                }
+                const newAssets = [...prev, { id, file: uploadBlob, previewUrl, name: `${file.name.replace('.pdf', '')}_Page_${pageNum}`, corners: detectedCorners, history: [], historyIndex: -1 }];
+                if (prev.length === 0 && pageNum === 1) setTimeout(() => setActiveAssetId(id), 0);
                 return newAssets;
               });
             }
-          } catch (err) {
-            console.error("PDF multi-page extraction failed:", err);
-          }
+          } catch (err) { console.error(err); }
         } else if (!isPdf) {
-          // 🟢 Handle standard images (JPG/PNG) normally
           const id = Math.random().toString(36).substring(7);
           const previewUrl = URL.createObjectURL(file);
           let detectedCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
           
           try {
-            const fd = new FormData();
-            fd.append('file', file);
+            const fd = new FormData(); fd.append('file', file);
             const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
-            if (res.ok) {
-              const data = await res.json();
-              if (data.corners) detectedCorners = data.corners;
-            }
+            if (res.ok) { const data = await res.json(); if (data.corners) detectedCorners = data.corners; }
           } catch (err) {}
 
           setAssets(prev => {
-            const newAssets = [...prev, { 
-              id, file, previewUrl, name: file.name, 
-              corners: detectedCorners, history: [], historyIndex: -1 
-            }];
-            if (prev.length === 0) {
-              setTimeout(() => setActiveAssetId(id), 0);
-            }
+            const newAssets = [...prev, { id, file, previewUrl, name: file.name, corners: detectedCorners, history: [], historyIndex: -1 }];
+            if (prev.length === 0) setTimeout(() => setActiveAssetId(id), 0);
             return newAssets;
           });
         }
       }
-    } finally { 
-      setIsUploading(false); 
-    }
+    } finally { setIsUploading(false); }
   }, []);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps } = useDropzone({
     onDrop, accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] }
   });
 
@@ -136,20 +112,34 @@ export default function DocumentScanner() {
   const currentProcessedImg = activeAsset?.historyIndex >= 0 ? activeAsset.history[activeAsset.historyIndex].url : null;
   const currentFilter = activeAsset?.historyIndex >= 0 ? activeAsset.history[activeAsset.historyIndex].filter : selectedFilter;
 
+  // 🟢 UPGRADE 3: Magnifier Math on Drag
   const handlePointerDown = (index) => (e) => { e.preventDefault(); setDraggingPoint(index); };
+  
   const handlePointerMove = (e) => {
     if (draggingPoint === null || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     let x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
     let y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    
     const newCorners = [...corners];
     newCorners[draggingPoint] = { x, y };
     setCorners(newCorners);
+
+    // Update Magnifier Position (Offset above the cursor)
+    setMagnifier({
+      show: true,
+      x: e.clientX,
+      y: e.clientY - 80, 
+      bgX: x,
+      bgY: y
+    });
   };
+  
   const handlePointerUp = () => {
     if (draggingPoint !== null) {
       setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners } : a));
       setDraggingPoint(null);
+      setMagnifier(prev => ({ ...prev, show: false }));
     }
   };
 
@@ -159,8 +149,7 @@ export default function DocumentScanner() {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
-      canvas.width = img.height;
-      canvas.height = img.width;
+      canvas.width = img.height; canvas.height = img.width;
       const ctx = canvas.getContext('2d');
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate(90 * Math.PI / 180);
@@ -176,6 +165,35 @@ export default function DocumentScanner() {
     img.src = activeAsset.previewUrl;
   };
 
+  // 🟢 UPGRADE 4: Smart Re-Detect
+  const handleReDetect = async () => {
+    if (!activeAsset) return;
+    setIsProcessing(true);
+    try {
+      const fd = new FormData(); fd.append('file', activeAsset.file);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.corners) {
+          setCorners(data.corners);
+          setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners: data.corners } : a));
+        }
+      }
+    } catch (err) { alert("Detection failed."); } finally { setIsProcessing(false); }
+  };
+
+  // 🟢 UPGRADE 5: Crop Presets
+  const applyPreset = (type) => {
+    let newCorners = [];
+    // Creating standard centered boxes based on ID ratios
+    if (type === 'id') newCorners = [{x: 20, y: 30}, {x: 80, y: 30}, {x: 80, y: 70}, {x: 20, y: 70}]; // Standard Card (Landscape)
+    if (type === 'passport') newCorners = [{x: 30, y: 20}, {x: 70, y: 20}, {x: 70, y: 80}, {x: 30, y: 80}]; // Passport (Portrait)
+    if (type === 'full') newCorners = [{x: 0, y: 0}, {x: 100, y: 0}, {x: 100, y: 100}, {x: 0, y: 100}]; // Full Free Crop
+    
+    setCorners(newCorners);
+    setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners: newCorners } : a));
+  };
+
   const performScan = async (asset, cropCorners, filterMode) => {
     const formData = new FormData();
     formData.append('file', asset.file, asset.name.replace('.pdf', '.jpg'));
@@ -184,12 +202,7 @@ export default function DocumentScanner() {
 
     try {
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/process`, { method: 'POST', body: formData });
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMsg = 'Unknown server error';
-        try { errorMsg = JSON.parse(errorText).error; } catch(e) { errorMsg = errorText; }
-        throw new Error(errorMsg);
-      }
+      if (!response.ok) throw new Error("Scan failed");
       const blob = await response.blob();
       const resultUrl = URL.createObjectURL(blob);
       
@@ -199,9 +212,8 @@ export default function DocumentScanner() {
         newHistory.push({ url: resultUrl, filter: filterMode });
         return { ...a, history: newHistory, historyIndex: newHistory.length - 1 };
       }));
-      setMode('preview');
-      setSliderPos(50);
-    } catch (err) { alert(`Scan failed: ${err.message}`); }
+      setMode('preview'); setSliderPos(50);
+    } catch (err) { console.error(err); }
   };
 
   const handleProcessScan = async (filterMode) => {
@@ -225,49 +237,30 @@ export default function DocumentScanner() {
   const handleExportPDF = async () => {
     const processedAssets = assets.filter(a => a.historyIndex >= 0);
     if (processedAssets.length === 0) return;
-    
     setIsDownloadingPdf(true);
     const formData = new FormData();
-    // 🟢 Send the toggle state to the backend
     formData.append('include_watermark', includeWatermark);
     
     for (let i = 0; i < processedAssets.length; i++) {
       const asset = processedAssets[i];
       const response = await fetch(asset.history[asset.historyIndex].url);
-      const blob = await response.blob();
-      formData.append('files', blob, `scanned_page_${i+1}.jpg`);
+      formData.append('files', await response.blob(), `scanned_page_${i+1}.jpg`);
     }
     
     try {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/export-pdf`, { method: 'POST', body: formData });
       if (!res.ok) throw new Error("Failed to generate PDF");
-      const pdfBlob = await res.blob();
-      const url = URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      // 🟢 Force explicit branded filename download
-      link.download = `PrepPrint_Enhanced_Scans_${Date.now()}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement('a'); link.href = url; link.download = `PrepPrint_Scans_${Date.now()}.pdf`;
+      document.body.appendChild(link); link.click(); link.remove();
     } catch (err) { alert("PDF Export failed."); } finally { setIsDownloadingPdf(false); }
   };
 
-  const undo = () => setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, historyIndex: Math.max(-1, a.historyIndex - 1) } : a));
-  const redo = () => setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, historyIndex: Math.min(a.history.length - 1, a.historyIndex + 1) } : a));
-
   const FilterButton = ({ id, icon: Icon, label }) => {
     const isActive = mode === 'preview' ? currentFilter === id : selectedFilter === id;
-    
     return (
       <button
-        onClick={() => {
-          if (mode === 'preview') {
-            handleProcessScan(id);
-          } else {
-            setSelectedFilter(id);
-          }
-        }}
+        onClick={() => { mode === 'preview' ? handleProcessScan(id) : setSelectedFilter(id); }}
         className={`flex flex-col items-center justify-center p-3 rounded-xl transition-all flex-1 border ${isActive ? 'bg-blue-600 text-white border-blue-600 shadow-md transform -translate-y-1' : 'bg-gray-100 dark:bg-slate-800 text-gray-600 dark:text-gray-400 border-transparent hover:border-gray-300 dark:hover:border-slate-600'}`}
       >
         <Icon className={`w-5 h-5 mb-1 ${isActive && mode === 'preview' ? 'animate-pulse' : ''}`} />
@@ -279,6 +272,24 @@ export default function DocumentScanner() {
   return (
     <div className="w-full max-w-7xl mx-auto flex flex-col p-4 md:p-6 pb-24" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
       
+      {/* MAGNIFIER LENS OVERLAY */}
+      {magnifier.show && (
+        <div 
+          className="fixed z-50 w-32 h-32 rounded-full border-4 border-blue-500 shadow-[0_0_20px_rgba(0,0,0,0.5)] pointer-events-none bg-white overflow-hidden flex items-center justify-center"
+          style={{ 
+            left: magnifier.x - 64, 
+            top: magnifier.y - 64,
+            backgroundImage: `url(${activeAsset.previewUrl})`,
+            backgroundSize: '400%',
+            backgroundPosition: `${magnifier.bgX}% ${magnifier.bgY}%`
+          }}
+        >
+          {/* Crosshair */}
+          <div className="absolute w-full h-px bg-blue-500/50"></div>
+          <div className="absolute h-full w-px bg-blue-500/50"></div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h2 className="text-2xl font-black text-gray-900 dark:text-white flex items-center"><Crop className="w-6 h-6 text-blue-500 mr-2" /> PrepPrint Pro Scanner Studio</h2>
@@ -307,27 +318,17 @@ export default function DocumentScanner() {
           </div>
 
           <button onClick={handleProcessAll} disabled={isProcessing || assets.length === 0} className="mx-4 mt-4 py-2 bg-blue-600 text-white font-bold rounded-lg flex items-center justify-center gap-2 hover:bg-blue-700 disabled:opacity-50">
-            <Zap className="w-4 h-4" /> Enhance All Files
+            <Zap className="w-4 h-4" /> Enhance All ({selectedFilter.replace('_', ' ')})
           </button>
           
           {assets.some(a => a.historyIndex >= 0) && (
             <div className="mx-4 mt-4 flex flex-col gap-2">
-              {/* 🟢 NEW: Watermark Toggle Checkbox */}
               <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={includeWatermark} 
-                  onChange={(e) => setIncludeWatermark(e.target.checked)} 
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
+                <input type="checkbox" checked={includeWatermark} onChange={(e) => setIncludeWatermark(e.target.checked)} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                 Include PrepPrint watermark
               </label>
               
-              <button 
-                onClick={handleExportPDF} 
-                disabled={isDownloadingPdf || isProcessing} 
-                className="w-full py-2 bg-green-600 text-white font-bold rounded-lg flex items-center justify-center gap-2 hover:bg-green-700 transition-all shadow-md disabled:opacity-50"
-              >
+              <button onClick={handleExportPDF} disabled={isDownloadingPdf || isProcessing} className="w-full py-2 bg-green-600 text-white font-bold rounded-lg flex items-center justify-center gap-2 hover:bg-green-700 transition-all shadow-md disabled:opacity-50">
                 {isDownloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
                 Download PDF
               </button>
@@ -336,11 +337,7 @@ export default function DocumentScanner() {
 
           <div className="flex-1 overflow-y-auto p-2 mt-2 space-y-2">
             {assets.map(asset => (
-              <div 
-                key={asset.id} 
-                onClick={() => setActiveAssetId(asset.id)}
-                className={`relative flex items-center p-2 rounded-lg cursor-pointer transition-all ${activeAssetId === asset.id ? 'bg-blue-100 dark:bg-slate-800 ring-2 ring-blue-500' : 'hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}
-              >
+              <div key={asset.id} onClick={() => setActiveAssetId(asset.id)} className={`relative flex items-center p-2 rounded-lg cursor-pointer transition-all ${activeAssetId === asset.id ? 'bg-blue-100 dark:bg-slate-800 ring-2 ring-blue-500' : 'hover:bg-gray-50 dark:hover:bg-slate-800/50'}`}>
                 <img src={asset.historyIndex >= 0 ? asset.history[asset.historyIndex].url : asset.previewUrl} className="w-12 h-12 object-cover rounded shadow-sm mr-3" alt="thumb" />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-gray-700 dark:text-gray-200 truncate">{asset.name}</p>
@@ -353,19 +350,29 @@ export default function DocumentScanner() {
         </div>
 
         {/* RIGHT: Studio Canvas & Toolbar */}
-        <div className="lg:col-span-9 flex flex-col gap-6">
+        <div className="lg:col-span-9 flex flex-col gap-4">
           {!activeAsset ? (
             <div className="flex items-center justify-center h-64 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-gray-200 dark:border-slate-800 text-gray-400 font-bold">
               Select or drop a document to begin scanning.
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm">
-                <div className="flex items-center gap-2">
-                  <button onClick={undo} disabled={activeAsset.historyIndex < 0} className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded disabled:opacity-30"><Undo className="w-5 h-5" /></button>
-                  <button onClick={redo} disabled={activeAsset.historyIndex >= activeAsset.history.length - 1} className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded disabled:opacity-30"><Redo className="w-5 h-5" /></button>
-                  <div className="w-px h-6 bg-gray-300 dark:bg-slate-700 mx-2" />
-                  <button onClick={handleRotate} className="flex items-center text-sm font-bold text-gray-600 dark:text-gray-300 hover:text-blue-500"><RotateCw className="w-4 h-4 mr-1" /> Rotate</button>
+              {/* 🟢 UPGRADE: Smart Presets Toolbar */}
+              <div className="flex flex-wrap items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button onClick={handleRotate} className="p-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded"><RotateCw className="w-5 h-5" /></button>
+                  <div className="w-px h-6 bg-gray-300 dark:bg-slate-700 mx-1" />
+                  
+                  {mode === 'crop' && (
+                    <>
+                      <button onClick={handleReDetect} className="flex items-center px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-xs font-bold rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                        <Scan className="w-4 h-4 mr-1" /> AI Re-Detect
+                      </button>
+                      <button onClick={() => applyPreset('id')} className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 text-xs font-bold rounded hover:bg-gray-200 dark:hover:bg-slate-700">ID / PAN Card</button>
+                      <button onClick={() => applyPreset('passport')} className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 text-xs font-bold rounded hover:bg-gray-200 dark:hover:bg-slate-700">Passport</button>
+                      <button onClick={() => applyPreset('full')} className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 text-xs font-bold rounded hover:bg-gray-200 dark:hover:bg-slate-700">Full Image</button>
+                    </>
+                  )}
                 </div>
                 {mode === 'preview' && (
                   <button onClick={() => setMode('crop')} className="px-4 py-1.5 bg-gray-200 dark:bg-slate-800 text-sm font-bold rounded hover:bg-gray-300 dark:hover:bg-slate-700 transition-colors">
@@ -374,7 +381,8 @@ export default function DocumentScanner() {
                 )}
               </div>
 
-              <div className="w-full flex items-center justify-center bg-slate-800 rounded-2xl shadow-inner p-4 min-h-[500px] overflow-hidden relative">
+              {/* Main Canvas */}
+              <div className="w-full flex items-center justify-center bg-slate-800 rounded-2xl shadow-inner p-4 min-h-[500px] overflow-hidden relative cursor-crosshair">
                 
                 {mode === 'preview' && currentProcessedImg ? (
                   <div className="relative inline-block shadow-2xl bg-black">
@@ -405,7 +413,7 @@ export default function DocumentScanner() {
                       
                       {corners.map((corner, i) => (
                         <g key={i} onPointerDown={handlePointerDown(i)} className="cursor-move pointer-events-auto group">
-                          <circle cx={`${corner.x}%`} cy={`${corner.y}%`} r="24" fill="transparent" />
+                          <circle cx={`${corner.x}%`} cy={`${corner.y}%`} r="28" fill="transparent" />
                           <circle cx={`${corner.x}%`} cy={`${corner.y}%`} r="8" fill="white" stroke="#3b82f6" strokeWidth="3" className="group-hover:scale-150 transition-transform origin-center" style={{ transformOrigin: `${corner.x}% ${corner.y}%` }} />
                         </g>
                       ))}
@@ -421,6 +429,7 @@ export default function DocumentScanner() {
                 )}
               </div>
 
+              {/* Filters */}
               <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm flex flex-col gap-4">
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                   <FilterButton id="original" icon={ImageIcon} label="Original" />
