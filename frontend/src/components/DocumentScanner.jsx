@@ -47,50 +47,86 @@ export default function DocumentScanner() {
     try {
       for (const file of acceptedFiles) {
         const isPdf = file.type === 'application/pdf';
-        const id = Math.random().toString(36).substring(7);
-        let previewUrl = null;
-        let uploadBlob = file;
 
         if (isPdf && window.pdfjsLib) {
           try {
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            const page = await pdf.getPage(1);
-            const viewport = page.getViewport({ scale: 2.0 });
-            const canvas = document.createElement('canvas');
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            previewUrl = canvas.toDataURL('image/jpeg', 0.95);
-            const res = await fetch(previewUrl);
-            uploadBlob = await res.blob();
-          } catch (err) { continue; }
-        } else if (!isPdf) {
-          previewUrl = URL.createObjectURL(file);
-        }
+            
+            // 🟢 FIXED: Loop through EVERY page in the PDF
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+              const id = Math.random().toString(36).substring(7);
+              const page = await pdf.getPage(pageNum);
+              const viewport = page.getViewport({ scale: 2.0 });
+              const canvas = document.createElement('canvas');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+              
+              const previewUrl = canvas.toDataURL('image/jpeg', 0.95);
+              const res = await fetch(previewUrl);
+              const uploadBlob = await res.blob();
 
-        let detectedCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
-        try {
-          const fd = new FormData();
-          fd.append('file', uploadBlob);
-          const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.corners) detectedCorners = data.corners;
+              // Detect corners for this specific page
+              let detectedCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
+              try {
+                const fd = new FormData();
+                fd.append('file', uploadBlob);
+                const cornerRes = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
+                if (cornerRes.ok) {
+                  const data = await cornerRes.json();
+                  if (data.corners) detectedCorners = data.corners;
+                }
+              } catch (err) {}
+
+              setAssets(prev => {
+                const newAssets = [...prev, { 
+                  id, file: uploadBlob, previewUrl, 
+                  name: `${file.name.replace('.pdf', '')}_Page_${pageNum}`, 
+                  corners: detectedCorners, history: [], historyIndex: -1 
+                }];
+                // Auto-select the very first page of the batch if nothing is active
+                if (prev.length === 0 && pageNum === 1) {
+                  setTimeout(() => setActiveAssetId(id), 0);
+                }
+                return newAssets;
+              });
+            }
+          } catch (err) {
+            console.error("PDF multi-page extraction failed:", err);
           }
-        } catch (err) {}
+        } else if (!isPdf) {
+          // 🟢 Handle standard images (JPG/PNG) normally
+          const id = Math.random().toString(36).substring(7);
+          const previewUrl = URL.createObjectURL(file);
+          let detectedCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
+          
+          try {
+            const fd = new FormData();
+            fd.append('file', file);
+            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.corners) detectedCorners = data.corners;
+            }
+          } catch (err) {}
 
-        setAssets(prev => {
-          const newAssets = [...prev, { 
-            id, file: uploadBlob, previewUrl, name: file.name, 
-            corners: detectedCorners, history: [], historyIndex: -1 
-          }];
-          if (!activeAssetId) setActiveAssetId(id);
-          return newAssets;
-        });
+          setAssets(prev => {
+            const newAssets = [...prev, { 
+              id, file, previewUrl, name: file.name, 
+              corners: detectedCorners, history: [], historyIndex: -1 
+            }];
+            if (prev.length === 0) {
+              setTimeout(() => setActiveAssetId(id), 0);
+            }
+            return newAssets;
+          });
+        }
       }
-    } finally { setIsUploading(false); }
-  }, [activeAssetId]);
+    } finally { 
+      setIsUploading(false); 
+    }
+  }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] }
