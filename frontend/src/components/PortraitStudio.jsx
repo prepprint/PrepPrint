@@ -1,6 +1,8 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Scissors, UserSquare2, UploadCloud, Loader2, Download, Printer, Trash2 } from 'lucide-react';
+// 🟢 IMPORT THE BROWSER AI
+import imglyRemoveBackground from '@imgly/background-removal';
 
 export default function PortraitStudio() {
   const [assets, setAssets] = useState([]);
@@ -8,7 +10,11 @@ export default function PortraitStudio() {
   
   const [mode, setMode] = useState('cutout');
   const [bgColor, setBgColor] = useState('transparent');
+  
+  // 🟢 NEW AI LOADING STATES
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progressText, setProgressText] = useState('');
+  const [progressPercent, setProgressPercent] = useState(0);
 
   const colors = [
     { name: 'Transparent', value: 'transparent', class: 'bg-gray-200 bg-[url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAAXNSR0IArs4c6QAAACVJREFUKFNjZCASMDKgAoho4M+fP/9x6sQqwCXHqGKUg8jQAAA1qAo0c42n+QAAAABJRU5ErkJggg==")]' },
@@ -18,21 +24,18 @@ export default function PortraitStudio() {
     { name: 'Studio Grey', value: '#e2e8f0', class: 'bg-slate-200' }
   ];
 
-  // 🟢 NEW: Batch Upload Logic (Accepts ALL standard image formats)
   const onDrop = useCallback((acceptedFiles) => {
     const newAssets = acceptedFiles.map(file => ({
       id: Math.random().toString(36).substring(7),
       file: file,
       name: file.name,
       originalUrl: URL.createObjectURL(file),
-      processedUrl: null // Will hold the AI result later
+      processedUrl: null 
     }));
 
     setAssets(prev => {
       const updated = [...prev, ...newAssets];
-      if (!activeAssetId && updated.length > 0) {
-        setActiveAssetId(updated[0].id);
-      }
+      if (!activeAssetId && updated.length > 0) setActiveAssetId(updated[0].id);
       return updated;
     });
   }, [activeAssetId]);
@@ -40,33 +43,41 @@ export default function PortraitStudio() {
   const { getRootProps, getInputProps } = useDropzone({
     onDrop, 
     accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.heic'] } 
-    // 🟢 Removed maxFiles to allow batch uploads
   });
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
 
-  // 🟢 Process Individual Images on Command
+  // 🟢 THE BROWSER AI ENGINE 🟢
   const processActiveImage = async () => {
     if (!activeAsset || activeAsset.processedUrl) return;
     
     setIsProcessing(true);
-    const formData = new FormData();
-    formData.append('file', activeAsset.file);
+    setProgressPercent(0);
+    setProgressText('Waking up AI Engine...');
 
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/studio/remove-bg`, {
-        method: 'POST', body: formData
+      // Run the AI locally in the browser!
+      const blob = await imglyRemoveBackground(activeAsset.file, {
+        progress: (key, current, total) => {
+          // Listen to the download progress of the WASM model
+          if (key.includes('fetch')) {
+            setProgressText('Downloading Secure AI Model (One-time)...');
+            setProgressPercent(Math.round((current / total) * 100));
+          } else {
+            setProgressText('Extracting Subject...');
+            setProgressPercent(100);
+          }
+        }
       });
-      if (!res.ok) throw new Error("AI Removal Failed. Image might be too complex.");
       
-      const blob = await res.blob();
       const resultUrl = URL.createObjectURL(blob);
       
       setAssets(prev => prev.map(a => 
         a.id === activeAssetId ? { ...a, processedUrl: resultUrl } : a
       ));
     } catch (err) {
-      alert("Error: " + err.message);
+      console.error(err);
+      alert("AI Processing Failed. Please try a different photo.");
     } finally {
       setIsProcessing(false);
     }
@@ -106,6 +117,7 @@ export default function PortraitStudio() {
 
   const handleDownloadSheet = async () => {
     setIsProcessing(true);
+    setProgressText('Compiling PDF Sheet...');
     const blob = await generateCombinedImage();
     if (!blob) { setIsProcessing(false); return; }
     
@@ -159,7 +171,6 @@ export default function PortraitStudio() {
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
-        {/* 🟢 LEFT: BATCH QUEUE SIDEBAR 🟢 */}
         <div className="lg:col-span-3 lg:sticky lg:top-24 flex flex-col bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-sm max-h-[600px]">
           <div {...getRootProps()} className="p-4 border-b border-dashed border-gray-300 dark:border-slate-700 bg-blue-50/50 dark:bg-blue-900/10 cursor-pointer hover:bg-blue-50 transition-colors text-center">
             <input {...getInputProps()} />
@@ -168,9 +179,7 @@ export default function PortraitStudio() {
           </div>
           
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {assets.length === 0 && (
-              <p className="text-center text-xs text-gray-400 mt-4 font-bold">No photos uploaded yet.</p>
-            )}
+            {assets.length === 0 && <p className="text-center text-xs text-gray-400 mt-4 font-bold">No photos uploaded yet.</p>}
             {assets.map(asset => (
               <div 
                 key={asset.id} 
@@ -197,7 +206,6 @@ export default function PortraitStudio() {
           </div>
         </div>
 
-        {/* RIGHT: STUDIO CANVAS */}
         <div className="lg:col-span-9 flex flex-col gap-6">
           {!activeAsset ? (
              <div className="flex items-center justify-center h-64 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border-2 border-dashed border-gray-200 dark:border-slate-800 text-gray-400 font-bold">
@@ -206,13 +214,19 @@ export default function PortraitStudio() {
           ) : (
             <div className="flex flex-col lg:flex-row gap-6 bg-white dark:bg-slate-900 p-4 rounded-2xl shadow-sm border border-gray-200 dark:border-slate-800">
               
-              {/* Main Canvas Area */}
               <div className="flex-1 flex flex-col items-center justify-center bg-gray-100 dark:bg-slate-950 rounded-xl overflow-hidden relative min-h-[400px]">
                 
+                {/* 🟢 UPGRADED LOADING SCREEN WITH PROGRESS BAR */}
                 {isProcessing && (
-                  <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm">
-                    <Loader2 className="w-10 h-10 text-blue-600 animate-spin mb-4" />
-                    <span className="font-bold text-blue-600 animate-pulse tracking-widest text-sm uppercase">AI Extracting...</span>
+                  <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 z-50 flex flex-col items-center justify-center backdrop-blur-md px-8">
+                    <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-6" />
+                    <span className="font-bold text-blue-600 tracking-wide text-sm uppercase mb-4">{progressText}</span>
+                    
+                    {/* Progress Bar */}
+                    <div className="w-full max-w-xs bg-gray-200 dark:bg-slate-700 rounded-full h-2.5 mb-1 overflow-hidden">
+                      <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
+                    </div>
+                    {progressPercent > 0 && <span className="text-xs text-gray-500 font-bold">{progressPercent}%</span>}
                   </div>
                 )}
                 
@@ -237,7 +251,6 @@ export default function PortraitStudio() {
                     )}
                     <img src={activeAsset.processedUrl} className="max-h-[500px] object-contain relative z-10 drop-shadow-xl" alt="Cutout" />
                     
-                    {/* Passport Crop Guide Overlay */}
                     {mode === 'passport' && (
                       <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
                          <div className="border-2 border-white/50 border-dashed w-[60%] h-[80%] rounded shadow-[0_0_0_9999px_rgba(0,0,0,0.3)] flex flex-col justify-between items-center py-4">
@@ -250,7 +263,6 @@ export default function PortraitStudio() {
                 )}
               </div>
 
-              {/* Controls Sidebar */}
               <div className="w-full lg:w-64 flex flex-col gap-6">
                 <div className={!activeAsset.processedUrl ? 'opacity-30 pointer-events-none' : ''}>
                   <h3 className="text-sm font-black text-gray-500 uppercase tracking-wider mb-3">Background Color</h3>

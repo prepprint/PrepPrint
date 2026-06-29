@@ -509,26 +509,9 @@ def scan_export_pdf():
 # ==========================================
 # 🟢 PRO CUTOUT & ID STUDIO ENGINE
 # ==========================================
-from rembg import remove, new_session
 
 # Load the lightweight model to protect Render's RAM limits
 bg_session = new_session("u2netp")
-
-@app.route('/api/v1/studio/remove-bg', methods=['POST'])
-def remove_background():
-    try:
-        if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
-        file = request.files['file']
-        
-        img_bytes = file.read()
-        
-        # 🟢 AI Background Removal (Output is always transparent PNG)
-        output_bytes = remove(img_bytes, session=bg_session)
-        
-        return send_file(io.BytesIO(output_bytes), mimetype='image/png')
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/studio/passport-sheet', methods=['POST'])
 def generate_passport_sheet():
