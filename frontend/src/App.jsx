@@ -67,7 +67,7 @@ export default function App() {
 
             {/* Navigation Links */}
             <nav className="flex items-center gap-1 sm:gap-2">
-              <NavLink to="/" icon={Home} label="Home" />
+              <NavLink to="/" icon={Home} label="Smart Note Printer" />
               <NavLink to="/scan" icon={Crop} label="Scanner" />
               <NavLink to="/portrait-studio" icon={Scissors} label="ID Studio" />
               <NavLink to="/id-builder" icon={LayoutTemplate} label="Grid Maker" />
@@ -88,7 +88,6 @@ export default function App() {
             <Route path="/compress" element={<Compressor />} />
             <Route path="/scan" element={<DocumentScanner />} />
             <Route path="/id-builder" element={<IdScanner />} />
-            {/* 🟢 NEW ROUTE ADDED HERE 🟢 */}
             <Route path="/portrait-studio" element={<PortraitStudio />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
