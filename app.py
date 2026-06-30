@@ -511,7 +511,6 @@ def scan_export_pdf():
 # ==========================================
 
 # Load the lightweight model to protect Render's RAM limits
-bg_session = new_session("u2netp")
 
 @app.route('/api/v1/studio/passport-sheet', methods=['POST'])
 def generate_passport_sheet():
