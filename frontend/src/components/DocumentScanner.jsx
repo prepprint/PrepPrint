@@ -1,16 +1,17 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { PDFDocument } from 'pdf-lib';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { Stage, Layer, Image as KonvaImage, Rect, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import { 
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
   ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard, Loader2,
-  Printer, CopyPlus, LayoutTemplate, Undo2
+  Printer, CopyPlus, LayoutTemplate, Undo2, Download, CopyAll
 } from 'lucide-react';
 
-// --- Helper Component for Draggable Konva Images ---
 const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
   const shapeRef = useRef();
   const trRef = useRef();
@@ -34,8 +35,7 @@ const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
           const scaleX = node.scaleX(); const scaleY = node.scaleY();
           node.scaleX(1); node.scaleY(1);
           onChange({
-            ...shapeProps,
-            x: node.x(), y: node.y(),
+            ...shapeProps, x: node.x(), y: node.y(),
             width: Math.max(5, node.width() * scaleX), height: Math.max(5, node.height() * scaleY),
             rotation: node.rotation(),
           });
@@ -58,15 +58,14 @@ export default function DocumentScanner() {
   const [activeTab, setActiveTab] = useState('crop');
   
   const containerRef = useRef(null);
-  const [corners, setCorners] = useState([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
+  const defaultCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
+  const [corners, setCorners] = useState(defaultCorners);
   const [draggingPoint, setDraggingPoint] = useState(null);
   const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0 });
 
-  // 🟢 NEW: Enhancement Engine States
   const defaultAdjustments = { brightness: 100, contrast: 100, saturation: 100, grayscale: 0 };
-  const [splitPos, setSplitPos] = useState(50); // Before/After slider position
+  const [splitPos, setSplitPos] = useState(50); 
 
-  // A4 Builder States
   const [canvasObjects, setCanvasObjects] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
 
@@ -101,11 +100,10 @@ export default function DocumentScanner() {
             const canvas = document.createElement('canvas');
             canvas.width = viewport.width; canvas.height = viewport.height;
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-            const previewUrl = canvas.toDataURL('image/jpeg', 0.95);
             
-            // 🟢 NEW: Initialize asset with adjustment state
+            const previewUrl = canvas.toDataURL('image/jpeg', 0.95);
             setAssets(prev => {
-              const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, adjustments: { ...defaultAdjustments }, name: `Page ${pageNum}` }];
+              const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: `Page ${pageNum}` }];
               if (prev.length === 0 && pageNum === 1) setTimeout(() => setActiveAssetId(id), 0);
               return newAssets;
             });
@@ -114,7 +112,7 @@ export default function DocumentScanner() {
           const id = Math.random().toString(36).substring(7);
           const previewUrl = URL.createObjectURL(file);
           setAssets(prev => {
-            const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, adjustments: { ...defaultAdjustments }, name: file.name }];
+            const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: file.name }];
             if (prev.length === 0) setTimeout(() => setActiveAssetId(id), 0);
             return newAssets;
           });
@@ -130,7 +128,56 @@ export default function DocumentScanner() {
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
 
-  // 🟢 UPDATED: Crop Math -> Now saves to croppedUrl to allow non-destructive filtering
+  // 🟢 NEW: Auto Detect (API Call)
+  const handleAutoDetect = async () => {
+    if (!activeAsset) return;
+    setIsProcessing(true);
+    try {
+      const blob = await fetch(activeAsset.previewUrl).then(r => r.blob());
+      const fd = new FormData();
+      fd.append('file', blob, 'image.jpg');
+      
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.corners) {
+          setCorners(data.corners);
+          setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners: data.corners } : a));
+        }
+      } else {
+        alert("Auto-detect couldn't find clear document edges. Try manual adjustment.");
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // 🟢 NEW: Rotate 90 Degrees 
+  const handleRotate = () => {
+    if (!activeAsset) return;
+    setIsProcessing(true);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.height; canvas.height = img.width;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(canvas.width / 2, canvas.height / 2);
+      ctx.rotate(90 * Math.PI / 180);
+      ctx.drawImage(img, -img.width / 2, -img.height / 2);
+      
+      const rotatedUrl = canvas.toDataURL('image/jpeg', 0.95);
+      
+      setAssets(prev => prev.map(a => 
+        a.id === activeAssetId ? { ...a, previewUrl: rotatedUrl, processedUrl: rotatedUrl, croppedUrl: null, corners: defaultCorners } : a
+      ));
+      setCorners(defaultCorners);
+      setIsProcessing(false);
+    };
+    img.src = activeAsset.previewUrl;
+  };
+
   const handleApplyCrop = () => {
     if (!activeAsset) return;
     setIsProcessing(true);
@@ -145,37 +192,31 @@ export default function DocumentScanner() {
       
       canvas.width = cropWidth; canvas.height = cropHeight;
       ctx.drawImage(img, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-      
       const croppedResult = canvas.toDataURL('image/jpeg', 1.0);
       
       setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, croppedUrl: croppedResult, processedUrl: croppedResult } : a));
       setIsProcessing(false);
       setActiveTab('filters');
+      applyRealTimeFilters(activeAsset.adjustments, activeAssetId, croppedResult);
     };
     img.src = activeAsset.previewUrl;
   };
 
-  // 🟢 NEW: Real-Time Pixel Processor
-  const applyRealTimeFilters = (newAdjustments) => {
-    if (!activeAsset || !activeAsset.croppedUrl) return;
-    
-    // Save state instantly
-    setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: newAdjustments } : a));
+  const applyRealTimeFilters = (newAdjustments, assetIdToUpdate = activeAssetId, cropSource = activeAsset?.croppedUrl) => {
+    if (!cropSource) return;
+    setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, adjustments: newAdjustments } : a));
 
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       canvas.width = img.width; canvas.height = img.height;
-      
-      // Apply exact CSS matrix math to the canvas
       ctx.filter = `brightness(${newAdjustments.brightness}%) contrast(${newAdjustments.contrast}%) saturate(${newAdjustments.saturation}%) grayscale(${newAdjustments.grayscale}%)`;
       ctx.drawImage(img, 0, 0, img.width, img.height);
-      
       const filteredResult = canvas.toDataURL('image/jpeg', 0.95);
-      setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, processedUrl: filteredResult } : a));
+      setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, processedUrl: filteredResult } : a));
     };
-    img.src = activeAsset.croppedUrl; // Always filter from the clean cropped version
+    img.src = cropSource; 
   };
 
   const resetEnhancements = () => {
@@ -183,7 +224,22 @@ export default function DocumentScanner() {
     setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: { ...defaultAdjustments }, processedUrl: a.croppedUrl } : a));
   };
 
-  // Pointer Events
+  // 🟢 NEW: Apply Filters to All Uploaded Pages
+  const handleApplyToAll = () => {
+    if (!activeAsset) return;
+    setIsProcessing(true);
+    const adjustmentsToCopy = activeAsset.adjustments;
+    
+    assets.forEach(asset => {
+      if (asset.id !== activeAssetId && asset.croppedUrl) {
+        applyRealTimeFilters(adjustmentsToCopy, asset.id, asset.croppedUrl);
+      }
+    });
+    
+    setTimeout(() => setIsProcessing(false), 500); 
+  };
+
+  // Interaction Pointers
   const handlePointerDown = (index) => (e) => { e.preventDefault(); setDraggingPoint(index); };
   const handlePointerMove = (e) => {
     if (draggingPoint === null || !containerRef.current || !activeAsset) return;
@@ -208,7 +264,52 @@ export default function DocumentScanner() {
     setGlobalMode('a4_builder');
   };
 
-  // Empty State
+  // 🟢 NEW: Export Engine (ZIP files)
+  const handleExportZip = async () => {
+    if (assets.length === 0) return;
+    setIsProcessing(true);
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("PrepPrint_Scans");
+      
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i];
+        const targetUrl = asset.processedUrl || asset.previewUrl;
+        const res = await fetch(targetUrl);
+        const blob = await res.blob();
+        folder.file(`Page_${i + 1}.jpg`, blob);
+      }
+      
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `PrepPrint_Images_${Date.now()}.zip`);
+    } catch (err) {
+      alert("Failed to create ZIP file.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Export Engine (PDF)
+  const handleExportPDF = async () => {
+    if (assets.length === 0) return;
+    setIsProcessing(true);
+    try {
+      const pdfDoc = await PDFDocument.create();
+      for (const asset of assets) {
+        const targetUrl = asset.processedUrl || asset.previewUrl;
+        const imgBytes = await fetch(targetUrl).then(res => res.arrayBuffer());
+        let image = targetUrl.includes('png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
+        const page = pdfDoc.addPage([image.width, image.height]);
+        page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+      }
+      const pdfBytes = await pdfDoc.save();
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url; link.download = `PrepPrint_Scanned_${Date.now()}.pdf`;
+      document.body.appendChild(link); link.click(); link.remove();
+    } catch (error) { alert("Failed to export PDF."); } finally { setIsProcessing(false); }
+  };
+
   if (assets.length === 0) {
     return (
       <div {...getRootProps()} className="w-full h-[calc(100vh-64px)] flex flex-col items-center justify-center bg-gray-50 dark:bg-slate-950 p-6">
@@ -226,7 +327,6 @@ export default function DocumentScanner() {
     <div {...getRootProps()} className="w-full h-[calc(100vh-64px)] flex flex-col overflow-hidden bg-gray-100 dark:bg-slate-950 relative" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerLeave={handlePointerUp}>
       <input {...getInputProps()} />
 
-      {/* TOP NAV: MODE SWITCHER */}
       <div className="h-14 bg-white dark:bg-slate-900 border-b border-gray-200 flex items-center justify-center px-4 z-30 shadow-sm flex-shrink-0 gap-2">
         <button onClick={() => setGlobalMode('scanner')} className={`px-6 py-2 rounded-full font-bold text-sm flex items-center transition-all ${globalMode === 'scanner' ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:text-gray-900'}`}>
           <Crop className="w-4 h-4 mr-2" /> Scanner & Filters
@@ -273,7 +373,6 @@ export default function DocumentScanner() {
 
         {/* CENTER PANEL */}
         <div className="flex-1 relative flex flex-col bg-[#e5e7eb] overflow-hidden">
-          
           <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-sm border border-gray-200/50 z-20">
             <button onClick={() => setZoom(z => Math.max(10, z - 10))} className="p-2 text-gray-600 hover:text-blue-600 rounded-lg"><ZoomOut className="w-5 h-5" /></button>
             <span className="text-xs font-black text-gray-700 w-12 text-center">{zoom}%</span>
@@ -283,11 +382,8 @@ export default function DocumentScanner() {
           </div>
 
           <div className="flex-1 overflow-auto flex items-center justify-center p-8">
-            
             {globalMode === 'scanner' && activeAsset && (
               <div className="relative shadow-2xl transition-transform duration-200 ease-out flex-shrink-0" style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}>
-                
-                {/* 🟢 NEW: BEFORE/AFTER SPLIT VIEW FOR FILTERS */}
                 {activeAsset.croppedUrl && activeTab === 'filters' ? (
                   <div className="relative bg-white cursor-ew-resize group" onMouseMove={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
@@ -295,15 +391,9 @@ export default function DocumentScanner() {
                   }}>
                      <img src={activeAsset.croppedUrl} className="max-h-[80vh] max-w-full object-contain block pointer-events-none" alt="Original" />
                      <img src={activeAsset.processedUrl} className="absolute inset-0 h-full w-full object-contain pointer-events-none" style={{ clipPath: `inset(0 ${100 - splitPos}% 0 0)` }} alt="Processed" />
-                     
-                     {/* The Splitter Bar */}
                      <div className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_rgba(0,0,0,0.5)] pointer-events-none" style={{ left: `${splitPos}%` }}>
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-blue-600 rounded-full shadow-lg flex items-center justify-center border-2 border-white">
-                           <SlidersHorizontal className="w-4 h-4 text-white" />
-                        </div>
+                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-blue-600 rounded-full shadow-lg flex items-center justify-center border-2 border-white"><SlidersHorizontal className="w-4 h-4 text-white" /></div>
                      </div>
-                     <div className="absolute top-4 left-4 bg-black/50 text-white px-2 py-1 text-xs font-bold rounded opacity-0 group-hover:opacity-100 transition-opacity">Before</div>
-                     <div className="absolute top-4 right-4 bg-blue-600/80 text-white px-2 py-1 text-xs font-bold rounded opacity-0 group-hover:opacity-100 transition-opacity">After</div>
                   </div>
                 ) : (
                   <div ref={containerRef} className="relative inline-block touch-none select-none bg-white">
@@ -325,8 +415,7 @@ export default function DocumentScanner() {
                 )}
               </div>
             )}
-
-            {/* A4 Canvas */}
+            
             {globalMode === 'a4_builder' && (
               <div className="bg-white shadow-[0_0_40px_rgba(0,0,0,0.1)] transition-transform duration-200 ease-out flex-shrink-0 border border-gray-200" style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center', width: '595px', height: '842px' }}>
                 <Stage width={595} height={842} onMouseDown={(e) => { if (e.target === e.target.getStage()) setSelectedObjectId(null); }} onTouchStart={(e) => { if (e.target === e.target.getStage()) setSelectedObjectId(null); }}>
@@ -334,10 +423,7 @@ export default function DocumentScanner() {
                     <Rect x={0} y={0} width={595} height={842} fill="white" />
                     <Rect x={20} y={20} width={555} height={802} stroke="rgba(0,0,0,0.05)" strokeWidth={1} dash={[5, 5]} listening={false} />
                     {canvasObjects.map((obj, i) => (
-                      <DraggableAsset
-                        key={obj.id} shapeProps={obj} isSelected={obj.id === selectedObjectId} onSelect={() => setSelectedObjectId(obj.id)}
-                        onChange={(newAttrs) => { const rects = canvasObjects.slice(); rects[i] = newAttrs; setCanvasObjects(rects); }}
-                      />
+                      <DraggableAsset key={obj.id} shapeProps={obj} isSelected={obj.id === selectedObjectId} onSelect={() => setSelectedObjectId(obj.id)} onChange={(newAttrs) => { const rects = canvasObjects.slice(); rects[i] = newAttrs; setCanvasObjects(rects); }} />
                     ))}
                   </Layer>
                 </Stage>
@@ -346,7 +432,7 @@ export default function DocumentScanner() {
           </div>
         </div>
 
-        {/* RIGHT PANEL: Dynamic Tools */}
+        {/* RIGHT PANEL */}
         {globalMode === 'scanner' ? (
           <div className="w-80 bg-white border-l border-gray-200 flex flex-col z-10 shadow-sm flex-shrink-0">
             <div className="flex p-2 bg-gray-100 m-4 rounded-xl border border-gray-200 shadow-inner">
@@ -356,20 +442,33 @@ export default function DocumentScanner() {
             
             <div className="flex-1 overflow-y-auto px-4 pb-4">
               {activeTab === 'crop' && (
-                <div className="space-y-4">
+                <div className="space-y-6">
+                  {/* 🟢 FIXED: Functional Perspective Buttons */}
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Perspective Tools</h4>
+                    <div className="grid grid-cols-2 gap-2 mb-4">
+                      <button onClick={handleAutoDetect} className="flex flex-col items-center p-3 bg-gray-50 rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors border border-gray-200">
+                        <MousePointer2 className="w-5 h-5 mb-2" />
+                        <span className="text-[10px] font-bold">Auto Detect</span>
+                      </button>
+                      <button onClick={handleRotate} className="flex flex-col items-center p-3 bg-gray-50 rounded-xl hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 transition-colors border border-gray-200">
+                        <RotateCw className="w-5 h-5 mb-2" />
+                        <span className="text-[10px] font-bold">Rotate 90°</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <button onClick={handleApplyCrop} className="w-full py-4 bg-blue-600 text-white font-black rounded-xl flex items-center justify-center hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-transform hover:-translate-y-0.5">
                     <Check className="w-5 h-5 mr-2" /> Slice & Apply Crop
                   </button>
-                  <p className="text-xs text-gray-500 text-center font-bold">Apply crop to unlock Enhancement Tools.</p>
                 </div>
               )}
 
-              {/* 🟢 NEW: REAL-TIME ADJUSTMENT SLIDERS */}
               {activeTab === 'filters' && activeAsset && activeAsset.adjustments && (
                 <div className="space-y-6">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider">Pro Adjustments</h4>
-                    <button onClick={resetEnhancements} className="text-[10px] font-bold text-gray-500 hover:text-red-500 flex items-center"><Undo2 className="w-3 h-3 mr-1" /> Reset All</button>
+                    <button onClick={resetEnhancements} className="text-[10px] font-bold text-gray-500 hover:text-red-500 flex items-center"><Undo2 className="w-3 h-3 mr-1" /> Reset</button>
                   </div>
                   
                   {[
@@ -379,36 +478,36 @@ export default function DocumentScanner() {
                     { label: 'B&W / Grayscale', key: 'grayscale', min: 0, max: 100 }
                   ].map((slider) => (
                     <div key={slider.key} className="space-y-2">
-                      <div className="flex justify-between text-xs font-bold text-gray-700">
-                        <span>{slider.label}</span>
-                        <span>{activeAsset.adjustments[slider.key]}%</span>
-                      </div>
-                      <input 
-                        type="range" min={slider.min} max={slider.max} value={activeAsset.adjustments[slider.key]}
-                        onChange={(e) => applyRealTimeFilters({ ...activeAsset.adjustments, [slider.key]: Number(e.target.value) })}
-                        className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                      />
+                      <div className="flex justify-between text-xs font-bold text-gray-700"><span>{slider.label}</span><span>{activeAsset.adjustments[slider.key]}%</span></div>
+                      <input type="range" min={slider.min} max={slider.max} value={activeAsset.adjustments[slider.key]} onChange={(e) => applyRealTimeFilters({ ...activeAsset.adjustments, [slider.key]: Number(e.target.value) })} className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" />
                     </div>
                   ))}
-                  <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mt-4">
-                     <p className="text-xs text-blue-700 font-bold">💡 Drag your mouse horizontally across the image to see the Before/After comparison.</p>
+
+                  {/* 🟢 FIXED: Batch Apply Enhancements */}
+                  <div className="pt-4 border-t border-gray-200">
+                    <button onClick={handleApplyToAll} className="w-full py-2.5 bg-blue-50 text-blue-600 font-bold rounded-lg flex items-center justify-center hover:bg-blue-100 transition-colors text-sm">
+                      <CopyAll className="w-4 h-4 mr-2" /> Apply Filters to All Pages
+                    </button>
                   </div>
                 </div>
               )}
             </div>
+
+            {/* 🟢 FIXED: Multi-Format Export Options */}
+            <div className="p-4 border-t border-gray-200 bg-gray-50 flex flex-col gap-2">
+              <button onClick={handleExportZip} className="w-full py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 font-bold text-sm rounded-xl flex items-center justify-center transition-colors">
+                <Download className="w-4 h-4 mr-2" /> Download Images (ZIP)
+              </button>
+              <button onClick={handleExportPDF} className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-black text-sm rounded-xl shadow-lg shadow-green-500/25 flex items-center justify-center transition-transform hover:-translate-y-0.5">
+                <Check className="w-5 h-5 mr-2" /> Export Document (PDF)
+              </button>
+            </div>
           </div>
         ) : (
           <div className="w-80 bg-white border-l border-gray-200 flex flex-col z-10 shadow-sm flex-shrink-0">
-             <div className="p-6 border-b border-gray-200">
-               <h3 className="font-black text-gray-900 mb-2">A4 Canvas Tools</h3>
-               <p className="text-xs text-gray-500">Drag items from the left sidebar onto this page. Click an item to resize or rotate it.</p>
-             </div>
+             <div className="p-6 border-b border-gray-200"><h3 className="font-black text-gray-900 mb-2">A4 Canvas Tools</h3></div>
              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {selectedObjectId && (
-                  <button onClick={() => setCanvasObjects(prev => prev.filter(obj => obj.id !== selectedObjectId))} className="w-full py-3 bg-red-50 text-red-600 font-bold rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors">
-                    <Trash2 className="w-4 h-4 mr-2" /> Delete Selected Item
-                  </button>
-                )}
+                {selectedObjectId && <button onClick={() => setCanvasObjects(prev => prev.filter(obj => obj.id !== selectedObjectId))} className="w-full py-3 bg-red-50 text-red-600 font-bold rounded-xl flex items-center justify-center hover:bg-red-100 transition-colors"><Trash2 className="w-4 h-4 mr-2" /> Delete Item</button>}
              </div>
           </div>
         )}
