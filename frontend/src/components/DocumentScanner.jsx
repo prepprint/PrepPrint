@@ -266,7 +266,7 @@ export default function DocumentScanner() {
     setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: { ...defaultAdjustments }, processedUrl: a.croppedUrl } : a));
   };
 
-  // 🟢 FIXED: Safe Promise-Based Application for Batches
+  // 🟢 FIXED: Batch processing now works flawlessly on un-cropped pages
   const handleApplyToAll = async () => {
     if (!activeAsset) return;
     setIsProcessing(true);
@@ -275,8 +275,11 @@ export default function DocumentScanner() {
     try {
       const updatedAssets = await Promise.all(assets.map(async (asset) => {
          if (asset.id === activeAssetId) return asset; // Skip the one we already edited
-         if (!asset.croppedUrl) return asset; // Skip un-cropped pages
-         const filteredResult = await processPixelMatrix(asset.croppedUrl, adjustmentsToCopy);
+         
+         // 🟢 THE FIX: Fallback to the original preview URL if they haven't cropped it yet!
+         const sourceImage = asset.croppedUrl || asset.previewUrl;
+         
+         const filteredResult = await processPixelMatrix(sourceImage, adjustmentsToCopy);
          return { ...asset, adjustments: { ...adjustmentsToCopy }, processedUrl: filteredResult };
       }));
       setAssets(updatedAssets);
