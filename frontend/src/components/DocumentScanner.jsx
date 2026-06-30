@@ -13,11 +13,14 @@ export default function DocumentScanner() {
   // App States
   const [isUploading, setIsUploading] = useState(false);
   const [zoom, setZoom] = useState(100);
-  const [activeTab, setActiveTab] = useState('crop'); // 'crop' or 'filters'
+  const [activeTab, setActiveTab] = useState('crop');
   
+  // 🟢 PHASE 2: CROP ENGINE STATES
   const containerRef = useRef(null);
+  const [corners, setCorners] = useState([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
+  const [draggingPoint, setDraggingPoint] = useState(null);
+  const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0 });
 
-  // Initialize PDF.js worker
   useEffect(() => {
     if (!window.pdfjsLib) {
       const script = document.createElement('script');
@@ -29,7 +32,15 @@ export default function DocumentScanner() {
     }
   }, []);
 
-  // The Unified Upload Engine
+  // Reset corners when switching assets
+  useEffect(() => {
+    if (activeAssetId) {
+      const asset = assets.find(a => a.id === activeAssetId);
+      if (asset && asset.corners) setCorners(asset.corners);
+      else setCorners([{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }]);
+    }
+  }, [activeAssetId, assets]);
+
   const onDrop = useCallback(async (acceptedFiles) => {
     setIsUploading(true);
     try {
@@ -71,14 +82,51 @@ export default function DocumentScanner() {
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop, noClick: assets.length > 0, // Disable clicking the whole screen once files are loaded
+    onDrop, noClick: assets.length > 0, 
     accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] }
   });
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
 
+  // 🟢 PHASE 2: CROP MATH & POINTER EVENTS
+  const handlePointerDown = (index) => (e) => { 
+    e.preventDefault(); 
+    setDraggingPoint(index); 
+  };
+  
+  const handlePointerMove = (e) => {
+    if (draggingPoint === null || !containerRef.current || !activeAsset) return;
+    
+    // Calculate mouse position strictly relative to the image bounds
+    const rect = containerRef.current.getBoundingClientRect();
+    let x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+    let y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+    
+    const newCorners = [...corners];
+    newCorners[draggingPoint] = { x, y };
+    setCorners(newCorners);
+
+    // Update the floating Magnifier Lens position
+    setMagnifier({
+      show: true,
+      x: e.clientX,
+      y: e.clientY - 80, // Offset it 80px above the cursor so it isn't blocked by the finger
+      bgX: x,
+      bgY: y
+    });
+  };
+  
+  const handlePointerUp = () => {
+    if (draggingPoint !== null) {
+      // Save the new corners to the active asset so they persist when switching tabs
+      setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners } : a));
+      setDraggingPoint(null);
+      setMagnifier(prev => ({ ...prev, show: false }));
+    }
+  };
+
   // ==========================================
-  // 🟢 EMPTY STATE (NO FILES UPLOADED)
+  // EMPTY STATE
   // ==========================================
   if (assets.length === 0) {
     return (
@@ -94,22 +142,43 @@ export default function DocumentScanner() {
           <p className="text-gray-500 text-center max-w-sm">
             Drag and drop PDFs or images to start the Pro Scanner workflow.
           </p>
-          <div className="mt-8 flex gap-4 text-xs font-bold text-gray-400 uppercase tracking-widest">
-            <span>JPG</span> • <span>PNG</span> • <span>PDF (Multi-page)</span>
-          </div>
         </div>
       </div>
     );
   }
 
   // ==========================================
-  // 🟢 PREMIUM 3-PANEL EDITOR LAYOUT
+  // MAIN WORKSPACE
   // ==========================================
   return (
-    <div {...getRootProps()} className="w-full h-[calc(100vh-64px)] flex overflow-hidden bg-gray-100 dark:bg-slate-950">
+    <div 
+      {...getRootProps()} 
+      className="w-full h-[calc(100vh-64px)] flex overflow-hidden bg-gray-100 dark:bg-slate-950 relative"
+      onPointerMove={handlePointerMove} 
+      onPointerUp={handlePointerUp} 
+      onPointerLeave={handlePointerUp}
+    >
       <input {...getInputProps()} />
 
-      {/* 🟢 LEFT PANEL: Asset Manager */}
+      {/* 🟢 PHASE 2: MAGNIFIER LENS OVERLAY */}
+      {magnifier.show && activeAsset && (
+        <div 
+          className="fixed z-50 w-32 h-32 rounded-full border-4 border-blue-500 shadow-[0_0_20px_rgba(0,0,0,0.5)] pointer-events-none bg-white overflow-hidden flex items-center justify-center"
+          style={{ 
+            left: magnifier.x - 64, 
+            top: magnifier.y - 64,
+            backgroundImage: `url(${activeAsset.previewUrl})`,
+            backgroundSize: `${10000 / zoom}%`, // Dynamically scale based on zoom level
+            backgroundPosition: `${magnifier.bgX}% ${magnifier.bgY}%`
+          }}
+        >
+          {/* Magnifier Crosshair */}
+          <div className="absolute w-full h-px bg-blue-500/80 shadow-sm"></div>
+          <div className="absolute h-full w-px bg-blue-500/80 shadow-sm"></div>
+        </div>
+      )}
+
+      {/* LEFT PANEL */}
       <div className="w-72 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col z-10 shadow-sm flex-shrink-0">
         <div className="p-4 border-b border-gray-200 dark:border-slate-800 flex items-center justify-between">
           <h3 className="font-black text-sm text-gray-900 dark:text-white flex items-center"><LayoutDashboard className="w-4 h-4 mr-2" /> Document Pages</h3>
@@ -138,18 +207,11 @@ export default function DocumentScanner() {
             </div>
           ))}
         </div>
-        
-        <div className="p-4 border-t border-gray-200 dark:border-slate-800">
-          <button className="w-full py-2.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-sm font-bold rounded-xl flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-            <UploadCloud className="w-4 h-4 mr-2" /> Add More Pages
-          </button>
-        </div>
       </div>
 
-      {/* 🟢 CENTER PANEL: The Canvas Workspace */}
-      <div className="flex-1 relative flex flex-col bg-[#e5e7eb] dark:bg-[#0f172a] overflow-hidden" ref={containerRef}>
+      {/* CENTER PANEL: Canvas Workspace */}
+      <div className="flex-1 relative flex flex-col bg-[#e5e7eb] dark:bg-[#0f172a] overflow-hidden">
         
-        {/* Canvas Toolbar (Top) */}
         <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-sm border border-gray-200/50 dark:border-slate-700/50 z-20">
           <button onClick={() => setZoom(z => Math.max(10, z - 10))} className="p-2 text-gray-600 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"><ZoomOut className="w-5 h-5" /></button>
           <span className="text-xs font-black text-gray-700 dark:text-gray-200 w-12 text-center">{zoom}%</span>
@@ -158,24 +220,62 @@ export default function DocumentScanner() {
           <button onClick={() => setZoom(100)} className="p-2 text-gray-600 hover:text-blue-600 rounded-lg hover:bg-blue-50 transition-colors"><Maximize className="w-5 h-5" /></button>
         </div>
 
-        {/* Live Canvas Area */}
         <div className="flex-1 overflow-auto flex items-center justify-center p-8">
           {activeAsset && (
             <div 
-              className="relative shadow-2xl transition-transform duration-200 ease-out"
+              className="relative shadow-2xl transition-transform duration-200 ease-out flex-shrink-0"
               style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}
             >
-              <img src={activeAsset.previewUrl} className="max-w-none block pointer-events-none" style={{ maxHeight: '80vh' }} alt="Active Document" />
-              {/* NOTE: OpenCV Cropping Grid will go here in Phase 2 */}
+              {/* 🟢 PHASE 2: INTERACTIVE IMAGE BOUNDARY */}
+              <div ref={containerRef} className="relative inline-block touch-none select-none bg-white">
+                <img 
+                  src={activeAsset.previewUrl} 
+                  draggable="false" 
+                  className="max-h-[80vh] max-w-full object-contain block pointer-events-none" 
+                  alt="Active Document" 
+                />
+                
+                {/* SVG Crop Overlay */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 10 }}>
+                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+                    <polygon points={corners.map(c => `${c.x},${c.y}`).join(' ')} fill="rgba(59, 130, 246, 0.15)" />
+                  </svg>
+
+                  {/* Connecting Lines */}
+                  <line x1={`${corners[0].x}%`} y1={`${corners[0].y}%`} x2={`${corners[1].x}%`} y2={`${corners[1].y}%`} stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 4" />
+                  <line x1={`${corners[1].x}%`} y1={`${corners[1].y}%`} x2={`${corners[2].x}%`} y2={`${corners[2].y}%`} stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 4" />
+                  <line x1={`${corners[2].x}%`} y1={`${corners[2].y}%`} x2={`${corners[3].x}%`} y2={`${corners[3].y}%`} stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 4" />
+                  <line x1={`${corners[3].x}%`} y1={`${corners[3].y}%`} x2={`${corners[0].x}%`} y2={`${corners[0].y}%`} stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 4" />
+                  
+                  {/* Draggable Corner Nodes */}
+                  {corners.map((corner, i) => (
+                    <g key={i} onPointerDown={handlePointerDown(i)} className="cursor-move pointer-events-auto group">
+                      {/* Invisible larger hit area for touchscreens */}
+                      <circle cx={`${corner.x}%`} cy={`${corner.y}%`} r="30" fill="transparent" />
+                      {/* Visible circle */}
+                      <circle 
+                        cx={`${corner.x}%`} 
+                        cy={`${corner.y}%`} 
+                        r="8" 
+                        fill="white" 
+                        stroke="#3b82f6" 
+                        strokeWidth="3" 
+                        className="group-hover:scale-150 transition-transform origin-center drop-shadow-md" 
+                        style={{ transformOrigin: `${corner.x}% ${corner.y}%` }} 
+                      />
+                    </g>
+                  ))}
+                </svg>
+              </div>
+
             </div>
           )}
         </div>
       </div>
 
-      {/* 🟢 RIGHT PANEL: Tool Inspector */}
+      {/* RIGHT PANEL: Tool Inspector */}
       <div className="w-80 bg-white dark:bg-slate-900 border-l border-gray-200 dark:border-slate-800 flex flex-col z-10 shadow-sm flex-shrink-0">
         
-        {/* Tab Navigation */}
         <div className="flex p-2 bg-gray-100 dark:bg-slate-950/50 m-4 rounded-xl border border-gray-200 dark:border-slate-800 shadow-inner">
           <button onClick={() => setActiveTab('crop')} className={`flex-1 py-2 text-xs font-black rounded-lg flex items-center justify-center transition-all ${activeTab === 'crop' ? 'bg-white dark:bg-slate-800 text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
             <Crop className="w-4 h-4 mr-2" /> Adjust & Crop
@@ -185,9 +285,7 @@ export default function DocumentScanner() {
           </button>
         </div>
 
-        {/* Dynamic Tool Content */}
         <div className="flex-1 overflow-y-auto px-4 pb-4">
-          
           {activeTab === 'crop' && (
             <div className="space-y-6">
               <div>
@@ -203,32 +301,10 @@ export default function DocumentScanner() {
                   </button>
                 </div>
               </div>
-              
-              <div>
-                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Smart Layouts</h4>
-                <div className="space-y-2">
-                  <button className="w-full text-left px-4 py-3 bg-gray-50 dark:bg-slate-800 rounded-xl text-sm font-bold border border-gray-200 dark:border-slate-700 hover:border-blue-400 transition-colors">Freeform Document</button>
-                  <button className="w-full text-left px-4 py-3 bg-gray-50 dark:bg-slate-800 rounded-xl text-sm font-bold border border-gray-200 dark:border-slate-700 hover:border-blue-400 transition-colors">Standard ID Card</button>
-                  <button className="w-full text-left px-4 py-3 bg-gray-50 dark:bg-slate-800 rounded-xl text-sm font-bold border border-gray-200 dark:border-slate-700 hover:border-blue-400 transition-colors">Passport Size</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'filters' && (
-            <div className="space-y-4">
-              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Pro Enhancements</h4>
-              {/* Placeholders for Phase 2 Filters */}
-              {['Text Clear (OCR)', 'Magic Color', 'High Contrast', 'B&W Scan', 'Original'].map(filter => (
-                <button key={filter} className="w-full flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700 hover:border-blue-500 hover:ring-1 hover:ring-blue-500 transition-all text-sm font-bold text-gray-700 dark:text-gray-200">
-                  {filter}
-                </button>
-              ))}
             </div>
           )}
         </div>
 
-        {/* Global Action Footer */}
         <div className="p-4 border-t border-gray-200 dark:border-slate-800 bg-gray-50 dark:bg-slate-900/50">
           <button className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black text-sm rounded-xl shadow-lg shadow-blue-500/25 flex items-center justify-center transition-transform hover:-translate-y-0.5">
             <Check className="w-5 h-5 mr-2" /> Finish & Export PDF
