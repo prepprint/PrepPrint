@@ -91,12 +91,17 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             new_page.show_pdf_page(target_rect, doc, page_num)
             
             if do_invert:
-                # 🟢 FIXED: Use an INSET (shrinking the rect) so it never touches the white paper
-                inset_rect = target_rect + (1.5, 1.5, -1.5, -1.5)
-                annot = new_page.add_rect_annot(inset_rect)
+                # 1. Apply the Inversion
+                annot = new_page.add_rect_annot(target_rect)
                 annot.set_border(width=0)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
+                
+                # 2. 🟢 THE MASK: Draw a white frame over the artifact edges
+                mask = new_page.add_rect_annot(target_rect)
+                mask.set_border(width=2.5) 
+                mask.set_colors(stroke=(1, 1, 1), fill=None)
+                mask.update()
                 
                 if preserve_images:
                     for img_info in doc[page_num].get_images():
@@ -137,12 +142,17 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             new_page.show_pdf_page(target_rect, doc, page_num)
             
             if do_invert:
-                # 🟢 FIXED: Use an INSET (shrinking the rect) so it never touches the white paper
-                inset_rect = target_rect + (1.5, 1.5, -1.5, -1.5)
-                annot = new_page.add_rect_annot(inset_rect)
+                # 1. Apply the Inversion
+                annot = new_page.add_rect_annot(target_rect)
                 annot.set_border(width=0)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
+
+                # 2. 🟢 THE MASK: Draw a white frame over the artifact edges
+                mask = new_page.add_rect_annot(target_rect)
+                mask.set_border(width=2.5) 
+                mask.set_colors(stroke=(1, 1, 1), fill=None)
+                mask.update()
                 
                 if preserve_images:
                     for img_info in doc[page_num].get_images():
