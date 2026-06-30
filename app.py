@@ -13,7 +13,11 @@ import numpy as np
 
 load_dotenv()
 
-app = Flask(__name__, static_folder='frontend/dist', static_url_path='/')
+# 🟢 BULLETPROOF ABSOLUTE PATHS
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
+
+app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 CORS(app)
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -286,7 +290,6 @@ def generate_study_materials():
     except Exception as e:
         return jsonify({"error": f"AI Processing Error: {str(e)}"}), 500
 
-
 # ==========================================
 # 🟢 PREMIUM ENHANCEMENT ENGINE
 # ==========================================
@@ -454,12 +457,10 @@ def scan_process():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 🟢 PDF BATCH EXPORT & BRANDING 🟢
 @app.route('/api/v1/scan/export-pdf', methods=['POST'])
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
-        # 🟢 NEW: Listen for the watermark toggle from the frontend
         include_watermark = request.form.get('include_watermark', 'true') == 'true'
         
         if not files: return jsonify({"error": "No files provided"}), 400
@@ -489,7 +490,6 @@ def scan_export_pdf():
             
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
             
-            # 🟢 CONDITIONAL BRANDING 🟢
             if include_watermark:
                 branding_text = "Scanned via PrepPrint.in"
                 text_length = fitz.get_text_length(branding_text, fontsize=10)
@@ -500,17 +500,10 @@ def scan_export_pdf():
         doc.close()
         output_stream.seek(0)
         
-        # 🟢 EXPLICIT FILENAME BRANDING 🟢
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-# ==========================================
-# 🟢 PRO CUTOUT & ID STUDIO ENGINE
-# ==========================================
-
-# Load the lightweight model to protect Render's RAM limits
 
 @app.route('/api/v1/studio/passport-sheet', methods=['POST'])
 def generate_passport_sheet():
@@ -520,15 +513,11 @@ def generate_passport_sheet():
         img_bytes = file.read()
         
         doc = fitz.open()
-        
-        # Standard 4x6 inch photo paper size in points
         PAPER_W, PAPER_H = 288, 432
-        # Standard Passport Size: 3.5cm x 4.5cm (approx 99 x 127 points)
         PHOTO_W, PHOTO_H = 99, 127
         
         page = doc.new_page(width=PAPER_W, height=PAPER_H)
         
-        # Calculate grid for 6 photos on a 4x6 sheet (2 columns, 3 rows)
         margin_x = (PAPER_W - (2 * PHOTO_W)) / 3
         margin_y = (PAPER_H - (3 * PHOTO_H)) / 4
         
@@ -539,7 +528,6 @@ def generate_passport_sheet():
                 
                 rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
                 page.insert_image(rect, stream=img_bytes)
-                # Draw a faint cut-line border
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
 
         output_stream = io.BytesIO()
@@ -553,24 +541,26 @@ def generate_passport_sheet():
         return jsonify({"error": str(e)}), 500
 
 # ==========================================
-# 🟢 REACT FRONTEND ROUTING (THE CATCH-ALL)
+# 🟢 BULLETPROOF CATCH-ALL ROUTING
 # ==========================================
 
-# 1. Serve the static assets (CSS, JS, images)
 @app.route('/assets/<path:path>')
 def serve_assets(path):
-    return send_from_directory('frontend/dist/assets', path)
+    assets_dir = os.path.join(DIST_DIR, 'assets')
+    return send_from_directory(assets_dir, path)
 
-# 2. The Catch-All Rule for React Router
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    # If the browser is asking for a specific file (like our JS/CSS assets)
-    if path != "" and os.path.exists(app.static_folder + '/' + path):
-        return send_from_directory(app.static_folder, path)
-    # Otherwise, load the React app
+    # Prevent the catch-all from swallowing missing API calls
+    if path.startswith('api/'):
+        return "API route not found", 404
+        
+    target_file = os.path.join(DIST_DIR, path)
+    if path != "" and os.path.exists(target_file):
+        return send_from_directory(DIST_DIR, path)
     else:
-        return send_from_directory(app.static_folder, 'index.html')
+        return send_from_directory(DIST_DIR, 'index.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT, debug=(ENVIRONMENT == "development"))

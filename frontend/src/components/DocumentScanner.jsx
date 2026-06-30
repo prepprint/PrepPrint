@@ -9,7 +9,7 @@ import {
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
   ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard, Loader2,
-  Printer, CopyPlus, LayoutTemplate, Undo2, Download, Copy, ScanFace
+  Printer, CopyPlus, LayoutTemplate, Undo2, Download, Copy, CreditCard
 } from 'lucide-react';
 
 const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
@@ -509,7 +509,7 @@ export default function DocumentScanner() {
                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Smart Layouts</h4>
                     <div className="space-y-2">
                       <button onClick={() => applyPresetLayout('full')} className="w-full text-left px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors">Freeform Document</button>
-                      <button onClick={() => applyPresetLayout('id')} className="w-full flex items-center px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors"><ScanFace className="w-4 h-4 mr-2 text-blue-600" /> Standard ID Card</button>
+                      <button onClick={() => applyPresetLayout('id')} className="w-full flex items-center px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors"><CreditCard className="w-4 h-4 mr-2 text-blue-600" /> Standard ID Card</button>
                       <button onClick={() => applyPresetLayout('passport')} className="w-full flex items-center px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors"><ImageIcon className="w-4 h-4 mr-2 text-blue-600" /> Passport Size</button>
                     </div>
                   </div>
