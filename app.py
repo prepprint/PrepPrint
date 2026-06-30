@@ -91,10 +91,10 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             new_page.show_pdf_page(target_rect, doc, page_num)
             
             if do_invert:
-                # 🟢 FIXED: Expanded bleed rect to eliminate anti-aliasing artifacts
-                bleed_rect = target_rect + (-1, -1, 1, 1)
-                annot = new_page.add_rect_annot(bleed_rect)
-                annot.set_border(width=0) # Force zero-width border
+                # 🟢 FIXED: Use an INSET (shrinking the rect) so it never touches the white paper
+                inset_rect = target_rect + (1.5, 1.5, -1.5, -1.5)
+                annot = new_page.add_rect_annot(inset_rect)
+                annot.set_border(width=0)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
@@ -137,10 +137,10 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             new_page.show_pdf_page(target_rect, doc, page_num)
             
             if do_invert:
-                # 🟢 FIXED: Expanded bleed rect to eliminate anti-aliasing artifacts
-                bleed_rect = target_rect + (-1, -1, 1, 1)
-                annot = new_page.add_rect_annot(bleed_rect)
-                annot.set_border(width=0) # Force zero-width border
+                # 🟢 FIXED: Use an INSET (shrinking the rect) so it never touches the white paper
+                inset_rect = target_rect + (1.5, 1.5, -1.5, -1.5)
+                annot = new_page.add_rect_annot(inset_rect)
+                annot.set_border(width=0)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
