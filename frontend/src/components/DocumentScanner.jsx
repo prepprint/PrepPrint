@@ -46,7 +46,6 @@ const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
   );
 };
 
-// 🟢 NEW: Extracted Image Processing Engine (Fixes the Apply To All Bug)
 const processPixelMatrix = (imgSrc, adjs) => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -55,11 +54,9 @@ const processPixelMatrix = (imgSrc, adjs) => {
       const ctx = canvas.getContext('2d');
       canvas.width = img.width; canvas.height = img.height;
       
-      // CSS Filters
       ctx.filter = `brightness(${adjs.brightness}%) contrast(${adjs.contrast}%) saturate(${adjs.saturation}%) grayscale(${adjs.grayscale}%)`;
       ctx.drawImage(img, 0, 0, img.width, img.height);
       
-      // Pixel Level Matrices
       if (adjs.shadowRemoval > 0 || adjs.sharpness > 0) {
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
@@ -102,7 +99,6 @@ export default function DocumentScanner() {
   const [activeTab, setActiveTab] = useState('crop');
   
   const containerRef = useRef(null);
-  // 🟢 FIXED: Default crop box now maps perfectly to the outer edges (0 to 100)
   const defaultCorners = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
   const [corners, setCorners] = useState(defaultCorners);
   const [draggingPoint, setDraggingPoint] = useState(null);
@@ -110,7 +106,7 @@ export default function DocumentScanner() {
 
   const defaultAdjustments = { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, sharpness: 0, shadowRemoval: 0 };
   const [splitPos, setSplitPos] = useState(50); 
-  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false); // 🟢 FIXED: Splitter interaction lock
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
 
   const [canvasObjects, setCanvasObjects] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
@@ -167,7 +163,7 @@ export default function DocumentScanner() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop, noClick: assets.length > 0, 
-    accept: { 'image/*': ['.png', '.jpg', '.jpeg'], 'application/pdf': ['.pdf'] }
+    accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.webp'], 'application/pdf': ['.pdf'] }
   });
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
@@ -245,10 +241,7 @@ export default function DocumentScanner() {
 
   const applyRealTimeFilters = async (newAdjustments, assetIdToUpdate = activeAssetId, cropSource = activeAsset?.croppedUrl) => {
     if (!cropSource) return;
-    // Optimistic UI state update so sliders feel instant
     setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, adjustments: newAdjustments } : a));
-    
-    // Execute matrix math and set final image
     const filteredResult = await processPixelMatrix(cropSource, newAdjustments);
     setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, processedUrl: filteredResult } : a));
   };
@@ -266,7 +259,6 @@ export default function DocumentScanner() {
     setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: { ...defaultAdjustments }, processedUrl: a.croppedUrl } : a));
   };
 
-  // 🟢 FIXED: Batch processing now works flawlessly on un-cropped pages
   const handleApplyToAll = async () => {
     if (!activeAsset) return;
     setIsProcessing(true);
@@ -274,17 +266,14 @@ export default function DocumentScanner() {
 
     try {
       const updatedAssets = await Promise.all(assets.map(async (asset) => {
-         if (asset.id === activeAssetId) return asset; // Skip the one we already edited
-         
-         // 🟢 THE FIX: Fallback to the original preview URL if they haven't cropped it yet!
+         if (asset.id === activeAssetId) return asset; 
          const sourceImage = asset.croppedUrl || asset.previewUrl;
-         
          const filteredResult = await processPixelMatrix(sourceImage, adjustmentsToCopy);
          return { ...asset, adjustments: { ...adjustmentsToCopy }, processedUrl: filteredResult };
       }));
       setAssets(updatedAssets);
     } catch (err) {
-      console.error("Batch update failed:", err);
+      console.error(err);
     } finally {
       setIsProcessing(false);
     }
@@ -323,31 +312,80 @@ export default function DocumentScanner() {
       for (let i = 0; i < assets.length; i++) {
         const targetUrl = assets[i].processedUrl || assets[i].previewUrl;
         const res = await fetch(targetUrl); const blob = await res.blob();
-        folder.file(`Page_${i + 1}.jpg`, blob);
+        folder.file(`PrepPrint_Page_${i + 1}.jpg`, blob);
       }
       const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, `PrepPrint_Images_${Date.now()}.zip`);
+      saveAs(content, `PrepPrint_Pro_Scans_${Date.now()}.zip`);
     } catch (err) { alert("Failed to create ZIP file."); } finally { setIsProcessing(false); }
   };
 
+  // 🟢 FIXED: Bulletproof Image format conversion to prevent pdf-lib crashes
   const handleExportPDF = async () => {
     if (assets.length === 0) return;
     setIsProcessing(true);
     try {
       const pdfDoc = await PDFDocument.create();
+      const A4_WIDTH = 595.28;
+      const A4_HEIGHT = 841.89;
+
       for (const asset of assets) {
         const targetUrl = asset.processedUrl || asset.previewUrl;
-        const imgBytes = await fetch(targetUrl).then(res => res.arrayBuffer());
-        let image = targetUrl.includes('png') ? await pdfDoc.embedPng(imgBytes) : await pdfDoc.embedJpg(imgBytes);
-        const page = pdfDoc.addPage([image.width, image.height]);
-        page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        
+        // Convert any possible image type (PNG, WebP, Blob) safely into a pure JPEG array buffer
+        const imgBytes = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width; canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            // Fill background white in case of transparent PNG uploads
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            canvas.toBlob((blob) => blob.arrayBuffer().then(resolve).catch(reject), 'image/jpeg', 0.95);
+          };
+          img.onerror = reject;
+          img.src = targetUrl;
+        });
+
+        // We can now safely embed it as JPG every time
+        const image = await pdfDoc.embedJpg(imgBytes);
+        const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+        
+        const margin = 20;
+        const maxW = A4_WIDTH - (margin * 2);
+        const maxH = A4_HEIGHT - (margin * 2);
+
+        const imgRatio = image.width / image.height;
+        const pageRatio = maxW / maxH;
+
+        let finalW, finalH;
+        if (imgRatio > pageRatio) {
+          finalW = maxW;
+          finalH = maxW / imgRatio;
+        } else {
+          finalH = maxH;
+          finalW = maxH * imgRatio;
+        }
+
+        const x = (A4_WIDTH - finalW) / 2;
+        const y = (A4_HEIGHT - finalH) / 2;
+
+        page.drawImage(image, { x, y, width: finalW, height: finalH });
       }
+      
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([pdfBytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); link.href = url; link.download = `PrepPrint_Scanned_${Date.now()}.pdf`;
+      const link = document.createElement('a'); link.href = url; 
+      link.download = `PrepPrint_Pro_Document_${Date.now()}.pdf`;
       document.body.appendChild(link); link.click(); link.remove();
-    } catch (error) { alert("Failed to export PDF."); } finally { setIsProcessing(false); }
+    } catch (error) { 
+      console.error(error);
+      alert("Failed to export PDF."); 
+    } finally { 
+      setIsProcessing(false); 
+    }
   };
 
   if (assets.length === 0) {
@@ -402,6 +440,21 @@ export default function DocumentScanner() {
                 <div onClick={() => { setActiveAssetId(asset.id); setGlobalMode('scanner'); }} className="h-32 bg-gray-100 flex items-center justify-center p-2 relative cursor-pointer overflow-hidden">
                   <img src={asset.processedUrl || asset.previewUrl} className="max-h-full object-contain drop-shadow-md" alt={`Page ${index + 1}`} />
                   <div className="absolute top-2 left-2 w-6 h-6 bg-black/50 text-white text-xs font-bold flex items-center justify-center rounded-md">{index + 1}</div>
+                  
+                  {/* 🟢 FIXED: Restored the vital Delete Button */}
+                  <button 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      const newAssets = assets.filter(a => a.id !== asset.id);
+                      setAssets(newAssets);
+                      if (activeAssetId === asset.id) {
+                         setActiveAssetId(newAssets.length > 0 ? newAssets[0].id : null);
+                      }
+                    }} 
+                    className="absolute top-2 right-2 p-1.5 bg-red-500/90 text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm z-10"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
                 </div>
                 <div className="bg-white p-2 flex border-t border-gray-200">
                    <button onClick={() => handleAddToCanvas(asset)} className="flex-1 py-1.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded flex items-center justify-center hover:bg-blue-100 transition-colors uppercase"><CopyPlus className="w-3 h-3 mr-1" /> Add to A4</button>
@@ -426,7 +479,6 @@ export default function DocumentScanner() {
               <div className="relative shadow-2xl transition-transform duration-200 ease-out flex-shrink-0" style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}>
                 
                 {activeAsset.croppedUrl && activeTab === 'filters' ? (
-                  /* 🟢 FIXED: Splitter now requires clicking/dragging to move */
                   <div 
                     className={`relative bg-white group ${isDraggingSplitter ? 'cursor-ew-resize' : 'cursor-default'}`} 
                     onMouseDown={() => setIsDraggingSplitter(true)}
