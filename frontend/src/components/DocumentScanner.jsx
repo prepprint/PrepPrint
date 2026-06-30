@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import { 
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
-  ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard 
+  ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard, Loader2 
 } from 'lucide-react';
 
 export default function DocumentScanner() {
