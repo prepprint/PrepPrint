@@ -9,7 +9,7 @@ import {
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
   ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard, Loader2,
-  Printer, CopyPlus, LayoutTemplate, Undo2, Download, CopyAll, ScanFace
+  Printer, CopyPlus, LayoutTemplate, Undo2, Download, Copy, ScanFace
 } from 'lucide-react';
 
 const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
@@ -532,7 +532,7 @@ export default function DocumentScanner() {
 
                   <div className="pt-4 border-t border-gray-200">
                     <button onClick={handleApplyToAll} className="w-full py-2.5 bg-blue-50 text-blue-600 font-bold rounded-lg flex items-center justify-center hover:bg-blue-100 transition-colors text-sm">
-                      <CopyAll className="w-4 h-4 mr-2" /> Apply Filters to All Pages
+                      <Copy className="w-4 h-4 mr-2" /> Apply Filters to All Pages
                     </button>
                   </div>
                 </div>
