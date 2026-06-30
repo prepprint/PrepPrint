@@ -46,6 +46,50 @@ const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
   );
 };
 
+// 🟢 NEW: Extracted Image Processing Engine (Fixes the Apply To All Bug)
+const processPixelMatrix = (imgSrc, adjs) => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = img.width; canvas.height = img.height;
+      
+      // CSS Filters
+      ctx.filter = `brightness(${adjs.brightness}%) contrast(${adjs.contrast}%) saturate(${adjs.saturation}%) grayscale(${adjs.grayscale}%)`;
+      ctx.drawImage(img, 0, 0, img.width, img.height);
+      
+      // Pixel Level Matrices
+      if (adjs.shadowRemoval > 0 || adjs.sharpness > 0) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const shadowBoost = 1 + (adjs.shadowRemoval / 100);
+
+        for (let i = 0; i < data.length; i += 4) {
+          if (adjs.shadowRemoval > 0) {
+            const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+            if (avg > 180 && avg < 250) {
+              data[i] = Math.min(255, data[i] * shadowBoost);
+              data[i+1] = Math.min(255, data[i+1] * shadowBoost);
+              data[i+2] = Math.min(255, data[i+2] * shadowBoost);
+            }
+          }
+          if (adjs.sharpness > 0) {
+             const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+             if (avg < 100) {
+               const harden = 1 - (adjs.sharpness / 200);
+               data[i] *= harden; data[i+1] *= harden; data[i+2] *= harden;
+             }
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+      }
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
+    };
+    img.src = imgSrc;
+  });
+};
+
 export default function DocumentScanner() {
   const [assets, setAssets] = useState([]);
   const [activeAssetId, setActiveAssetId] = useState(null);
@@ -58,14 +102,15 @@ export default function DocumentScanner() {
   const [activeTab, setActiveTab] = useState('crop');
   
   const containerRef = useRef(null);
-  const defaultCorners = [{ x: 10, y: 10 }, { x: 90, y: 10 }, { x: 90, y: 90 }, { x: 10, y: 90 }];
+  // 🟢 FIXED: Default crop box now maps perfectly to the outer edges (0 to 100)
+  const defaultCorners = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
   const [corners, setCorners] = useState(defaultCorners);
   const [draggingPoint, setDraggingPoint] = useState(null);
   const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0 });
 
-  // 🟢 PHASE 6: Advanced Adjustment Matrix
   const defaultAdjustments = { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, sharpness: 0, shadowRemoval: 0 };
   const [splitPos, setSplitPos] = useState(50); 
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false); // 🟢 FIXED: Splitter interaction lock
 
   const [canvasObjects, setCanvasObjects] = useState([]);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
@@ -127,11 +172,10 @@ export default function DocumentScanner() {
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
 
-  // 🟢 PHASE 6: SMART PRESETS
   const applyPresetLayout = (type) => {
     let newCorners = [];
-    if (type === 'id') newCorners = [{x: 15, y: 30}, {x: 85, y: 30}, {x: 85, y: 70}, {x: 15, y: 70}]; // Standard 85.6x54mm Ratio
-    if (type === 'passport') newCorners = [{x: 25, y: 15}, {x: 75, y: 15}, {x: 75, y: 85}, {x: 25, y: 85}]; // Portrait 2x2 Ratio
+    if (type === 'id') newCorners = [{x: 15, y: 30}, {x: 85, y: 30}, {x: 85, y: 70}, {x: 15, y: 70}]; 
+    if (type === 'passport') newCorners = [{x: 25, y: 15}, {x: 75, y: 15}, {x: 75, y: 85}, {x: 25, y: 85}]; 
     if (type === 'full') newCorners = defaultCorners;
     
     setCorners(newCorners);
@@ -176,8 +220,6 @@ export default function DocumentScanner() {
   const handleApplyCrop = () => {
     if (!activeAsset) return;
     setIsProcessing(true);
-    
-    // We use a slight delay so the UI rendering "Processing..." text appears before the heavy math freezes the main thread
     setTimeout(() => {
       const img = new Image();
       img.onload = () => {
@@ -201,59 +243,16 @@ export default function DocumentScanner() {
     }, 50);
   };
 
-  // 🟢 PHASE 6: THE PIXEL MANIPULATION ENGINE
-  const applyRealTimeFilters = (newAdjustments, assetIdToUpdate = activeAssetId, cropSource = activeAsset?.croppedUrl) => {
+  const applyRealTimeFilters = async (newAdjustments, assetIdToUpdate = activeAssetId, cropSource = activeAsset?.croppedUrl) => {
     if (!cropSource) return;
+    // Optimistic UI state update so sliders feel instant
     setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, adjustments: newAdjustments } : a));
-
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = img.width; canvas.height = img.height;
-      
-      // Step 1: Base CSS Filters
-      ctx.filter = `brightness(${newAdjustments.brightness}%) contrast(${newAdjustments.contrast}%) saturate(${newAdjustments.saturation}%) grayscale(${newAdjustments.grayscale}%)`;
-      ctx.drawImage(img, 0, 0, img.width, img.height);
-      
-      // Step 2: Advanced Pixel Matrix (Shadow Removal & Sharpness)
-      if (newAdjustments.shadowRemoval > 0 || newAdjustments.sharpness > 0) {
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        const shadowThreshold = 180; // Gray limit
-        const shadowBoost = 1 + (newAdjustments.shadowRemoval / 100); 
-
-        for (let i = 0; i < data.length; i += 4) {
-          // Flatten Shadows (Adaptive Background Whitening)
-          if (newAdjustments.shadowRemoval > 0) {
-            const avg = (data[i] + data[i+1] + data[i+2]) / 3;
-            if (avg > shadowThreshold && avg < 250) {
-              data[i] = Math.min(255, data[i] * shadowBoost);     // R
-              data[i+1] = Math.min(255, data[i+1] * shadowBoost); // G
-              data[i+2] = Math.min(255, data[i+2] * shadowBoost); // B
-            }
-          }
-          
-          // Basic Sharpness (Hard Contrast on text edges)
-          if (newAdjustments.sharpness > 0) {
-             const avg = (data[i] + data[i+1] + data[i+2]) / 3;
-             if (avg < 100) { // If it's dark text, make it darker based on sharpness slider
-               const harden = 1 - (newAdjustments.sharpness / 200);
-               data[i] *= harden; data[i+1] *= harden; data[i+2] *= harden;
-             }
-          }
-        }
-        ctx.putImageData(imageData, 0, 0);
-      }
-
-      const filteredResult = canvas.toDataURL('image/jpeg', 0.95);
-      setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, processedUrl: filteredResult } : a));
-    };
-    img.src = cropSource; 
+    
+    // Execute matrix math and set final image
+    const filteredResult = await processPixelMatrix(cropSource, newAdjustments);
+    setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, processedUrl: filteredResult } : a));
   };
 
-  // OCR Pre-configured Filter Package
   const applyProFilter = (filterName) => {
     let adjs = { ...defaultAdjustments };
     if (filterName === 'Text Clear (OCR)') adjs = { brightness: 120, contrast: 180, saturation: 100, grayscale: 100, sharpness: 100, shadowRemoval: 80 };
@@ -267,17 +266,25 @@ export default function DocumentScanner() {
     setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: { ...defaultAdjustments }, processedUrl: a.croppedUrl } : a));
   };
 
-  const handleApplyToAll = () => {
+  // 🟢 FIXED: Safe Promise-Based Application for Batches
+  const handleApplyToAll = async () => {
     if (!activeAsset) return;
     setIsProcessing(true);
-    setTimeout(() => {
-      assets.forEach(asset => {
-        if (asset.id !== activeAssetId && asset.croppedUrl) {
-          applyRealTimeFilters(activeAsset.adjustments, asset.id, asset.croppedUrl);
-        }
-      });
+    const adjustmentsToCopy = activeAsset.adjustments;
+
+    try {
+      const updatedAssets = await Promise.all(assets.map(async (asset) => {
+         if (asset.id === activeAssetId) return asset; // Skip the one we already edited
+         if (!asset.croppedUrl) return asset; // Skip un-cropped pages
+         const filteredResult = await processPixelMatrix(asset.croppedUrl, adjustmentsToCopy);
+         return { ...asset, adjustments: { ...adjustmentsToCopy }, processedUrl: filteredResult };
+      }));
+      setAssets(updatedAssets);
+    } catch (err) {
+      console.error("Batch update failed:", err);
+    } finally {
       setIsProcessing(false);
-    }, 50);
+    }
   };
 
   const handlePointerDown = (index) => (e) => { e.preventDefault(); setDraggingPoint(index); };
@@ -414,15 +421,26 @@ export default function DocumentScanner() {
           <div className="flex-1 overflow-auto flex items-center justify-center p-8">
             {globalMode === 'scanner' && activeAsset && (
               <div className="relative shadow-2xl transition-transform duration-200 ease-out flex-shrink-0" style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}>
+                
                 {activeAsset.croppedUrl && activeTab === 'filters' ? (
-                  <div className="relative bg-white cursor-ew-resize group" onMouseMove={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setSplitPos(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)));
-                  }}>
+                  /* 🟢 FIXED: Splitter now requires clicking/dragging to move */
+                  <div 
+                    className={`relative bg-white group ${isDraggingSplitter ? 'cursor-ew-resize' : 'cursor-default'}`} 
+                    onMouseDown={() => setIsDraggingSplitter(true)}
+                    onMouseUp={() => setIsDraggingSplitter(false)}
+                    onMouseLeave={() => setIsDraggingSplitter(false)}
+                    onMouseMove={(e) => {
+                      if (!isDraggingSplitter) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setSplitPos(Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)));
+                    }}
+                  >
                      <img src={activeAsset.croppedUrl} className="max-h-[80vh] max-w-full object-contain block pointer-events-none" alt="Original" />
                      <img src={activeAsset.processedUrl} className="absolute inset-0 h-full w-full object-contain pointer-events-none" style={{ clipPath: `inset(0 ${100 - splitPos}% 0 0)` }} alt="Processed" />
                      <div className="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_rgba(0,0,0,0.5)] pointer-events-none" style={{ left: `${splitPos}%` }}>
-                        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 bg-blue-600 rounded-full shadow-lg flex items-center justify-center border-2 border-white"><SlidersHorizontal className="w-4 h-4 text-white" /></div>
+                        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 rounded-full shadow-lg flex items-center justify-center border-2 border-white transition-colors ${isDraggingSplitter ? 'bg-blue-700' : 'bg-blue-600'}`}>
+                          <SlidersHorizontal className="w-4 h-4 text-white" />
+                        </div>
                      </div>
                   </div>
                 ) : (
@@ -487,7 +505,6 @@ export default function DocumentScanner() {
                     </div>
                   </div>
 
-                  {/* 🟢 NEW: SMART LAYOUT PRESETS */}
                   <div>
                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Smart Layouts</h4>
                     <div className="space-y-2">
@@ -516,7 +533,6 @@ export default function DocumentScanner() {
                     <button onClick={resetEnhancements} className="text-[10px] font-bold text-gray-500 hover:text-red-500 flex items-center"><Undo2 className="w-3 h-3 mr-1" /> Reset</button>
                   </div>
                   
-                  {/* 🟢 NEW: ADVANCED PIXEL SLIDERS */}
                   {[
                     { label: 'Brightness', key: 'brightness', min: 50, max: 200 },
                     { label: 'Contrast', key: 'contrast', min: 50, max: 250 },
