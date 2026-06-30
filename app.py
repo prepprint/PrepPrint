@@ -69,6 +69,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
+# 🟢 RESTORED: Watermark logic is back for standard tools
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
     if n_up == 1:
         for page_num in page_indices:
@@ -107,8 +108,10 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                                 )
                                 new_page.insert_image(mapped_rect, stream=image_bytes)
 
+            # RESTORED: Add watermark to single pages
             if custom_watermark.strip():
                 new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
+                
         return 0, None
     else:
         is_odd_sheet = (len(out_doc) % 2 == 0)
@@ -122,8 +125,11 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 is_odd_sheet = (len(out_doc) % 2 == 0)
                 grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
                 new_page = out_doc.new_page(width=target_w, height=target_h)
+                
+                # RESTORED: Add watermark to N-up layout pages
                 if custom_watermark.strip():
                     new_page.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
+                
                 current_rect_idx = 0
                 
             target_rect = grid_rects[current_rect_idx]
@@ -156,6 +162,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 
         return current_rect_idx, new_page
 
+# 🟢 RESTORED: Pulling the watermark string for standard tools
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
@@ -290,10 +297,6 @@ def generate_study_materials():
     except Exception as e:
         return jsonify({"error": f"AI Processing Error: {str(e)}"}), 500
 
-# ==========================================
-# 🟢 PREMIUM ENHANCEMENT ENGINE
-# ==========================================
-
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
@@ -364,7 +367,6 @@ def scan_process():
         if image is None:
             return jsonify({"error": "Backend could not decode image. Verify format."}), 400
             
-        # Smart Downscaler
         MAX_DIMENSION = 1600
         h, w = image.shape[:2]
         if max(h, w) > MAX_DIMENSION:
@@ -395,7 +397,6 @@ def scan_process():
         else:
             warped = image.copy()
 
-        # Skip filters if image is tiny
         if warped.shape[0] < 25 or warped.shape[1] < 25:
             final_img = warped
         else:
@@ -457,11 +458,11 @@ def scan_process():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# 🟢 The new Pro Scanner still remains clean of watermarks
 @app.route('/api/v1/scan/export-pdf', methods=['POST'])
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
-        include_watermark = request.form.get('include_watermark', 'true') == 'true'
         
         if not files: return jsonify({"error": "No files provided"}), 400
 
@@ -489,11 +490,6 @@ def scan_export_pdf():
             y = (A4_H - new_h) / 2
             
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
-            
-            if include_watermark:
-                branding_text = "Scanned via PrepPrint.in"
-                text_length = fitz.get_text_length(branding_text, fontsize=10)
-                page.insert_text((A4_W - text_length - 20, A4_H - 15), branding_text, fontsize=10, color=(0.5, 0.5, 0.5))
 
         output_stream = io.BytesIO()
         doc.save(output_stream, garbage=4, deflate=True)
