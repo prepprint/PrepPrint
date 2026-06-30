@@ -9,7 +9,7 @@ import {
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
   ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard, Loader2,
-  Printer, CopyPlus, LayoutTemplate, Undo2, Download, CopyAll
+  Printer, CopyPlus, LayoutTemplate, Undo2, Download, CopyAll, ScanFace
 } from 'lucide-react';
 
 const DraggableAsset = ({ shapeProps, isSelected, onSelect, onChange }) => {
@@ -63,7 +63,8 @@ export default function DocumentScanner() {
   const [draggingPoint, setDraggingPoint] = useState(null);
   const [magnifier, setMagnifier] = useState({ show: false, x: 0, y: 0, bgX: 0, bgY: 0 });
 
-  const defaultAdjustments = { brightness: 100, contrast: 100, saturation: 100, grayscale: 0 };
+  // 🟢 PHASE 6: Advanced Adjustment Matrix
+  const defaultAdjustments = { brightness: 100, contrast: 100, saturation: 100, grayscale: 0, sharpness: 0, shadowRemoval: 0 };
   const [splitPos, setSplitPos] = useState(50); 
 
   const [canvasObjects, setCanvasObjects] = useState([]);
@@ -94,7 +95,6 @@ export default function DocumentScanner() {
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-            const id = Math.random().toString(36).substring(7);
             const page = await pdf.getPage(pageNum);
             const viewport = page.getViewport({ scale: 2.0 });
             const canvas = document.createElement('canvas');
@@ -103,17 +103,16 @@ export default function DocumentScanner() {
             
             const previewUrl = canvas.toDataURL('image/jpeg', 0.95);
             setAssets(prev => {
-              const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: `Page ${pageNum}` }];
-              if (prev.length === 0 && pageNum === 1) setTimeout(() => setActiveAssetId(id), 0);
+              const newAssets = [...prev, { id: Math.random().toString(36).substring(7), file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: `Page ${pageNum}` }];
+              if (prev.length === 0 && pageNum === 1) setTimeout(() => setActiveAssetId(newAssets[0].id), 0);
               return newAssets;
             });
           }
         } else {
-          const id = Math.random().toString(36).substring(7);
           const previewUrl = URL.createObjectURL(file);
           setAssets(prev => {
-            const newAssets = [...prev, { id, file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: file.name }];
-            if (prev.length === 0) setTimeout(() => setActiveAssetId(id), 0);
+            const newAssets = [...prev, { id: Math.random().toString(36).substring(7), file, previewUrl, processedUrl: previewUrl, croppedUrl: null, corners: defaultCorners, adjustments: { ...defaultAdjustments }, name: file.name }];
+            if (prev.length === 0) setTimeout(() => setActiveAssetId(newAssets[0].id), 0);
             return newAssets;
           });
         }
@@ -128,15 +127,23 @@ export default function DocumentScanner() {
 
   const activeAsset = assets.find(a => a.id === activeAssetId);
 
-  // 🟢 NEW: Auto Detect (API Call)
+  // 🟢 PHASE 6: SMART PRESETS
+  const applyPresetLayout = (type) => {
+    let newCorners = [];
+    if (type === 'id') newCorners = [{x: 15, y: 30}, {x: 85, y: 30}, {x: 85, y: 70}, {x: 15, y: 70}]; // Standard 85.6x54mm Ratio
+    if (type === 'passport') newCorners = [{x: 25, y: 15}, {x: 75, y: 15}, {x: 75, y: 85}, {x: 25, y: 85}]; // Portrait 2x2 Ratio
+    if (type === 'full') newCorners = defaultCorners;
+    
+    setCorners(newCorners);
+    setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners: newCorners } : a));
+  };
+
   const handleAutoDetect = async () => {
     if (!activeAsset) return;
     setIsProcessing(true);
     try {
       const blob = await fetch(activeAsset.previewUrl).then(r => r.blob());
-      const fd = new FormData();
-      fd.append('file', blob, 'image.jpg');
-      
+      const fd = new FormData(); fd.append('file', blob, 'image.jpg');
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/scan/detect-corners`, { method: 'POST', body: fd });
       if (res.ok) {
         const data = await res.json();
@@ -144,17 +151,10 @@ export default function DocumentScanner() {
           setCorners(data.corners);
           setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, corners: data.corners } : a));
         }
-      } else {
-        alert("Auto-detect couldn't find clear document edges. Try manual adjustment.");
       }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsProcessing(false);
-    }
+    } catch (err) {} finally { setIsProcessing(false); }
   };
 
-  // 🟢 NEW: Rotate 90 Degrees 
   const handleRotate = () => {
     if (!activeAsset) return;
     setIsProcessing(true);
@@ -166,14 +166,9 @@ export default function DocumentScanner() {
       ctx.translate(canvas.width / 2, canvas.height / 2);
       ctx.rotate(90 * Math.PI / 180);
       ctx.drawImage(img, -img.width / 2, -img.height / 2);
-      
       const rotatedUrl = canvas.toDataURL('image/jpeg', 0.95);
-      
-      setAssets(prev => prev.map(a => 
-        a.id === activeAssetId ? { ...a, previewUrl: rotatedUrl, processedUrl: rotatedUrl, croppedUrl: null, corners: defaultCorners } : a
-      ));
-      setCorners(defaultCorners);
-      setIsProcessing(false);
+      setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, previewUrl: rotatedUrl, processedUrl: rotatedUrl, croppedUrl: null, corners: defaultCorners } : a));
+      setCorners(defaultCorners); setIsProcessing(false);
     };
     img.src = activeAsset.previewUrl;
   };
@@ -181,27 +176,32 @@ export default function DocumentScanner() {
   const handleApplyCrop = () => {
     if (!activeAsset) return;
     setIsProcessing(true);
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      const xs = corners.map(c => c.x); const ys = corners.map(c => c.y);
-      const minX = (Math.min(...xs) / 100) * img.width; const maxX = (Math.max(...xs) / 100) * img.width;
-      const minY = (Math.min(...ys) / 100) * img.height; const maxY = (Math.max(...ys) / 100) * img.height;
-      const cropWidth = maxX - minX; const cropHeight = maxY - minY;
-      
-      canvas.width = cropWidth; canvas.height = cropHeight;
-      ctx.drawImage(img, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-      const croppedResult = canvas.toDataURL('image/jpeg', 1.0);
-      
-      setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, croppedUrl: croppedResult, processedUrl: croppedResult } : a));
-      setIsProcessing(false);
-      setActiveTab('filters');
-      applyRealTimeFilters(activeAsset.adjustments, activeAssetId, croppedResult);
-    };
-    img.src = activeAsset.previewUrl;
+    
+    // We use a slight delay so the UI rendering "Processing..." text appears before the heavy math freezes the main thread
+    setTimeout(() => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const xs = corners.map(c => c.x); const ys = corners.map(c => c.y);
+        const minX = (Math.min(...xs) / 100) * img.width; const maxX = (Math.max(...xs) / 100) * img.width;
+        const minY = (Math.min(...ys) / 100) * img.height; const maxY = (Math.max(...ys) / 100) * img.height;
+        const cropWidth = maxX - minX; const cropHeight = maxY - minY;
+        
+        canvas.width = cropWidth; canvas.height = cropHeight;
+        ctx.drawImage(img, minX, minY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+        const croppedResult = canvas.toDataURL('image/jpeg', 1.0);
+        
+        setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, croppedUrl: croppedResult, processedUrl: croppedResult } : a));
+        setIsProcessing(false);
+        setActiveTab('filters');
+        applyRealTimeFilters(activeAsset.adjustments, activeAssetId, croppedResult);
+      };
+      img.src = activeAsset.previewUrl;
+    }, 50);
   };
 
+  // 🟢 PHASE 6: THE PIXEL MANIPULATION ENGINE
   const applyRealTimeFilters = (newAdjustments, assetIdToUpdate = activeAssetId, cropSource = activeAsset?.croppedUrl) => {
     if (!cropSource) return;
     setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, adjustments: newAdjustments } : a));
@@ -211,12 +211,55 @@ export default function DocumentScanner() {
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
       canvas.width = img.width; canvas.height = img.height;
+      
+      // Step 1: Base CSS Filters
       ctx.filter = `brightness(${newAdjustments.brightness}%) contrast(${newAdjustments.contrast}%) saturate(${newAdjustments.saturation}%) grayscale(${newAdjustments.grayscale}%)`;
       ctx.drawImage(img, 0, 0, img.width, img.height);
+      
+      // Step 2: Advanced Pixel Matrix (Shadow Removal & Sharpness)
+      if (newAdjustments.shadowRemoval > 0 || newAdjustments.sharpness > 0) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        const shadowThreshold = 180; // Gray limit
+        const shadowBoost = 1 + (newAdjustments.shadowRemoval / 100); 
+
+        for (let i = 0; i < data.length; i += 4) {
+          // Flatten Shadows (Adaptive Background Whitening)
+          if (newAdjustments.shadowRemoval > 0) {
+            const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+            if (avg > shadowThreshold && avg < 250) {
+              data[i] = Math.min(255, data[i] * shadowBoost);     // R
+              data[i+1] = Math.min(255, data[i+1] * shadowBoost); // G
+              data[i+2] = Math.min(255, data[i+2] * shadowBoost); // B
+            }
+          }
+          
+          // Basic Sharpness (Hard Contrast on text edges)
+          if (newAdjustments.sharpness > 0) {
+             const avg = (data[i] + data[i+1] + data[i+2]) / 3;
+             if (avg < 100) { // If it's dark text, make it darker based on sharpness slider
+               const harden = 1 - (newAdjustments.sharpness / 200);
+               data[i] *= harden; data[i+1] *= harden; data[i+2] *= harden;
+             }
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+      }
+
       const filteredResult = canvas.toDataURL('image/jpeg', 0.95);
       setAssets(prev => prev.map(a => a.id === assetIdToUpdate ? { ...a, processedUrl: filteredResult } : a));
     };
     img.src = cropSource; 
+  };
+
+  // OCR Pre-configured Filter Package
+  const applyProFilter = (filterName) => {
+    let adjs = { ...defaultAdjustments };
+    if (filterName === 'Text Clear (OCR)') adjs = { brightness: 120, contrast: 180, saturation: 100, grayscale: 100, sharpness: 100, shadowRemoval: 80 };
+    if (filterName === 'Magic Color') adjs = { brightness: 110, contrast: 130, saturation: 140, grayscale: 0, sharpness: 20, shadowRemoval: 40 };
+    if (filterName === 'B&W Scan') adjs = { brightness: 105, contrast: 150, saturation: 100, grayscale: 100, sharpness: 50, shadowRemoval: 0 };
+    applyRealTimeFilters(adjs);
   };
 
   const resetEnhancements = () => {
@@ -224,22 +267,19 @@ export default function DocumentScanner() {
     setAssets(prev => prev.map(a => a.id === activeAssetId ? { ...a, adjustments: { ...defaultAdjustments }, processedUrl: a.croppedUrl } : a));
   };
 
-  // 🟢 NEW: Apply Filters to All Uploaded Pages
   const handleApplyToAll = () => {
     if (!activeAsset) return;
     setIsProcessing(true);
-    const adjustmentsToCopy = activeAsset.adjustments;
-    
-    assets.forEach(asset => {
-      if (asset.id !== activeAssetId && asset.croppedUrl) {
-        applyRealTimeFilters(adjustmentsToCopy, asset.id, asset.croppedUrl);
-      }
-    });
-    
-    setTimeout(() => setIsProcessing(false), 500); 
+    setTimeout(() => {
+      assets.forEach(asset => {
+        if (asset.id !== activeAssetId && asset.croppedUrl) {
+          applyRealTimeFilters(activeAsset.adjustments, asset.id, asset.croppedUrl);
+        }
+      });
+      setIsProcessing(false);
+    }, 50);
   };
 
-  // Interaction Pointers
   const handlePointerDown = (index) => (e) => { e.preventDefault(); setDraggingPoint(index); };
   const handlePointerMove = (e) => {
     if (draggingPoint === null || !containerRef.current || !activeAsset) return;
@@ -264,32 +304,22 @@ export default function DocumentScanner() {
     setGlobalMode('a4_builder');
   };
 
-  // 🟢 NEW: Export Engine (ZIP files)
   const handleExportZip = async () => {
     if (assets.length === 0) return;
     setIsProcessing(true);
     try {
       const zip = new JSZip();
       const folder = zip.folder("PrepPrint_Scans");
-      
       for (let i = 0; i < assets.length; i++) {
-        const asset = assets[i];
-        const targetUrl = asset.processedUrl || asset.previewUrl;
-        const res = await fetch(targetUrl);
-        const blob = await res.blob();
+        const targetUrl = assets[i].processedUrl || assets[i].previewUrl;
+        const res = await fetch(targetUrl); const blob = await res.blob();
         folder.file(`Page_${i + 1}.jpg`, blob);
       }
-      
       const content = await zip.generateAsync({ type: "blob" });
       saveAs(content, `PrepPrint_Images_${Date.now()}.zip`);
-    } catch (err) {
-      alert("Failed to create ZIP file.");
-    } finally {
-      setIsProcessing(false);
-    }
+    } catch (err) { alert("Failed to create ZIP file."); } finally { setIsProcessing(false); }
   };
 
-  // Export Engine (PDF)
   const handleExportPDF = async () => {
     if (assets.length === 0) return;
     setIsProcessing(true);
@@ -443,7 +473,6 @@ export default function DocumentScanner() {
             <div className="flex-1 overflow-y-auto px-4 pb-4">
               {activeTab === 'crop' && (
                 <div className="space-y-6">
-                  {/* 🟢 FIXED: Functional Perspective Buttons */}
                   <div>
                     <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Perspective Tools</h4>
                     <div className="grid grid-cols-2 gap-2 mb-4">
@@ -458,6 +487,16 @@ export default function DocumentScanner() {
                     </div>
                   </div>
 
+                  {/* 🟢 NEW: SMART LAYOUT PRESETS */}
+                  <div>
+                    <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Smart Layouts</h4>
+                    <div className="space-y-2">
+                      <button onClick={() => applyPresetLayout('full')} className="w-full text-left px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors">Freeform Document</button>
+                      <button onClick={() => applyPresetLayout('id')} className="w-full flex items-center px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors"><ScanFace className="w-4 h-4 mr-2 text-blue-600" /> Standard ID Card</button>
+                      <button onClick={() => applyPresetLayout('passport')} className="w-full flex items-center px-4 py-3 bg-gray-50 rounded-xl text-sm font-bold border border-gray-200 hover:border-blue-400 transition-colors"><ImageIcon className="w-4 h-4 mr-2 text-blue-600" /> Passport Size</button>
+                    </div>
+                  </div>
+
                   <button onClick={handleApplyCrop} className="w-full py-4 bg-blue-600 text-white font-black rounded-xl flex items-center justify-center hover:bg-blue-700 shadow-lg shadow-blue-500/30 transition-transform hover:-translate-y-0.5">
                     <Check className="w-5 h-5 mr-2" /> Slice & Apply Crop
                   </button>
@@ -466,16 +505,24 @@ export default function DocumentScanner() {
 
               {activeTab === 'filters' && activeAsset && activeAsset.adjustments && (
                 <div className="space-y-6">
+                  <div className="flex flex-wrap gap-2 mb-4">
+                     <button onClick={() => applyProFilter('Text Clear (OCR)')} className="flex-1 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg border border-blue-200 hover:bg-blue-100">Text Clear</button>
+                     <button onClick={() => applyProFilter('Magic Color')} className="flex-1 py-1.5 bg-purple-50 text-purple-700 text-xs font-bold rounded-lg border border-purple-200 hover:bg-purple-100">Color Boost</button>
+                     <button onClick={() => applyProFilter('B&W Scan')} className="flex-1 py-1.5 bg-gray-100 text-gray-700 text-xs font-bold rounded-lg border border-gray-300 hover:bg-gray-200">B&W</button>
+                  </div>
+
                   <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider">Pro Adjustments</h4>
+                    <h4 className="text-xs font-black text-gray-900 uppercase tracking-wider">Fine Tuning</h4>
                     <button onClick={resetEnhancements} className="text-[10px] font-bold text-gray-500 hover:text-red-500 flex items-center"><Undo2 className="w-3 h-3 mr-1" /> Reset</button>
                   </div>
                   
+                  {/* 🟢 NEW: ADVANCED PIXEL SLIDERS */}
                   {[
                     { label: 'Brightness', key: 'brightness', min: 50, max: 200 },
                     { label: 'Contrast', key: 'contrast', min: 50, max: 250 },
                     { label: 'Saturation', key: 'saturation', min: 0, max: 200 },
-                    { label: 'B&W / Grayscale', key: 'grayscale', min: 0, max: 100 }
+                    { label: 'Shadow Removal', key: 'shadowRemoval', min: 0, max: 100 },
+                    { label: 'Sharpness', key: 'sharpness', min: 0, max: 100 }
                   ].map((slider) => (
                     <div key={slider.key} className="space-y-2">
                       <div className="flex justify-between text-xs font-bold text-gray-700"><span>{slider.label}</span><span>{activeAsset.adjustments[slider.key]}%</span></div>
@@ -483,7 +530,6 @@ export default function DocumentScanner() {
                     </div>
                   ))}
 
-                  {/* 🟢 FIXED: Batch Apply Enhancements */}
                   <div className="pt-4 border-t border-gray-200">
                     <button onClick={handleApplyToAll} className="w-full py-2.5 bg-blue-50 text-blue-600 font-bold rounded-lg flex items-center justify-center hover:bg-blue-100 transition-colors text-sm">
                       <CopyAll className="w-4 h-4 mr-2" /> Apply Filters to All Pages
@@ -493,7 +539,6 @@ export default function DocumentScanner() {
               )}
             </div>
 
-            {/* 🟢 FIXED: Multi-Format Export Options */}
             <div className="p-4 border-t border-gray-200 bg-gray-50 flex flex-col gap-2">
               <button onClick={handleExportZip} className="w-full py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-100 font-bold text-sm rounded-xl flex items-center justify-center transition-colors">
                 <Download className="w-4 h-4 mr-2" /> Download Images (ZIP)
