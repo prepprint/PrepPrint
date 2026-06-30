@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import { 
   UploadCloud, Crop, Image as ImageIcon, FileText, Check, 
   Trash2, Zap, SlidersHorizontal, RotateCw, Contrast, Type, 
-  ZoomIn, ZoomOut, Maximize, MousePointerSquare, LayoutDashboard 
+  ZoomIn, ZoomOut, Maximize, MousePointer2, LayoutDashboard 
 } from 'lucide-react';
 
 export default function DocumentScanner() {
@@ -194,7 +194,7 @@ export default function DocumentScanner() {
                 <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Perspective Tools</h4>
                 <div className="grid grid-cols-2 gap-2">
                   <button className="flex flex-col items-center p-3 bg-gray-50 dark:bg-slate-800 rounded-xl hover:bg-gray-100 hover:text-blue-600 transition-colors border border-gray-200 dark:border-slate-700">
-                    <MousePointerSquare className="w-5 h-5 mb-2" />
+                    <MousePointer2 className="w-5 h-5 mb-2" />
                     <span className="text-[10px] font-bold">Auto Detect</span>
                   </button>
                   <button className="flex flex-col items-center p-3 bg-gray-50 dark:bg-slate-800 rounded-xl hover:bg-gray-100 hover:text-blue-600 transition-colors border border-gray-200 dark:border-slate-700">
