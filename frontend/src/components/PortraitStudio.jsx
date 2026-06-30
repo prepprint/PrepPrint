@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Scissors, UserSquare2, UploadCloud, Loader2, Download, Printer, Trash2 } from 'lucide-react';
-// 🟢 IMPORT THE BROWSER AI
-import imglyRemoveBackground from '@imgly/background-removal';
+// 🟢 FIXED: Using the strict "Named Export" with curly braces
+import { removeBackground } from '@imgly/background-removal';
 
 export default function PortraitStudio() {
   const [assets, setAssets] = useState([]);
@@ -11,7 +11,6 @@ export default function PortraitStudio() {
   const [mode, setMode] = useState('cutout');
   const [bgColor, setBgColor] = useState('transparent');
   
-  // 🟢 NEW AI LOADING STATES
   const [isProcessing, setIsProcessing] = useState(false);
   const [progressText, setProgressText] = useState('');
   const [progressPercent, setProgressPercent] = useState(0);
@@ -56,10 +55,9 @@ export default function PortraitStudio() {
     setProgressText('Waking up AI Engine...');
 
     try {
-      // Run the AI locally in the browser!
-      const blob = await imglyRemoveBackground(activeAsset.file, {
+      // 🟢 FIXED: Calling the named function correctly
+      const blob = await removeBackground(activeAsset.file, {
         progress: (key, current, total) => {
-          // Listen to the download progress of the WASM model
           if (key.includes('fetch')) {
             setProgressText('Downloading Secure AI Model (One-time)...');
             setProgressPercent(Math.round((current / total) * 100));
@@ -216,13 +214,11 @@ export default function PortraitStudio() {
               
               <div className="flex-1 flex flex-col items-center justify-center bg-gray-100 dark:bg-slate-950 rounded-xl overflow-hidden relative min-h-[400px]">
                 
-                {/* 🟢 UPGRADED LOADING SCREEN WITH PROGRESS BAR */}
                 {isProcessing && (
                   <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 z-50 flex flex-col items-center justify-center backdrop-blur-md px-8">
                     <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-6" />
                     <span className="font-bold text-blue-600 tracking-wide text-sm uppercase mb-4">{progressText}</span>
                     
-                    {/* Progress Bar */}
                     <div className="w-full max-w-xs bg-gray-200 dark:bg-slate-700 rounded-full h-2.5 mb-1 overflow-hidden">
                       <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
                     </div>
