@@ -13,7 +13,7 @@ import numpy as np
 
 load_dotenv()
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='frontend/dist', static_url_path='/')
 CORS(app)
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -564,13 +564,13 @@ def serve_assets(path):
 # 2. The Catch-All Rule for React Router
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
-def serve_frontend(path):
-    # If the browser asks for a specific file that exists in the dist folder, give it
-    if path != "" and os.path.exists(f"frontend/dist/{path}"):
-        return send_from_directory('frontend/dist', path)
-    
-    # Otherwise, give them the main lobby (index.html) and let React handle it!
-    return send_from_directory('frontend/dist', 'index.html')
+def serve(path):
+    # If the browser is asking for a specific file (like our JS/CSS assets)
+    if path != "" and os.path.exists(app.static_folder + '/' + path):
+        return send_from_directory(app.static_folder, path)
+    # Otherwise, load the React app
+    else:
+        return send_from_directory(app.static_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=PORT, debug=(ENVIRONMENT == "development"))
