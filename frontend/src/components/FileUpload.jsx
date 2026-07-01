@@ -10,12 +10,16 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [invertColors, setInvertColors] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [preserveImages, setPreserveImages] = useState(false); // 🟢 The New State
+  const [preserveImages, setPreserveImages] = useState(false);
 
   // Platform Layout Settings
   const [nUp, setNUp] = useState(1);
   const [orientation, setOrientation] = useState('portrait');
   const [gutterMargin, setGutterMargin] = useState('none');
+
+  // 🟢 NEW: Live Preview States
+  const [previewImageUrl, setPreviewImageUrl] = useState(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
 
   // Visual Workspace States
   const [pdfJsLoaded, setPdfJsLoaded] = useState(false);
@@ -48,6 +52,59 @@ export function FileUpload() {
       setIsDarkMode(true);
     }
   }, []);
+
+  // 🟢 NEW: The Debounced Live Preview Engine
+  useEffect(() => {
+    if (files.length === 0) {
+      setPreviewImageUrl(null);
+      return;
+    }
+
+    const generatePreview = async () => {
+      setIsPreviewLoading(true);
+      try {
+        const formData = new FormData();
+        formData.append('file', files[0].file); // Grab the first uploaded file for preview
+        formData.append('n_up', nUp);
+        formData.append('orientation', orientation);
+        formData.append('gutter_margin', gutterMargin);
+        formData.append('invert_colors', invertColors);
+        formData.append('preserve_images', preserveImages);
+
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/preview-layout`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+          setPreviewImageUrl(prev => {
+            if (prev) URL.revokeObjectURL(prev); // Prevent memory leaks
+            return url;
+          });
+        }
+      } catch (err) {
+        console.error("Preview generation failed", err);
+      } finally {
+        setIsPreviewLoading(false);
+      }
+    };
+
+    // 500ms Debounce: Only fetch from Python once the user stops clicking buttons
+    const timeoutId = setTimeout(() => {
+      generatePreview();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [files[0]?.id, nUp, orientation, gutterMargin, invertColors, preserveImages]);
+
+  // Clean up object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
+    };
+  }, [previewImageUrl]);
 
   // --- LOW-OVERHEAD ULTRA PERFORMANCE GAME ENGINE ---
   useEffect(() => {
@@ -446,9 +503,7 @@ export function FileUpload() {
   return (
     <div className="w-full max-w-5xl mx-auto mt-8 px-4">
       
-      {/* 🟢 TOP AD BANNER PLACEMENT 🟢 */}
-
-{/* Configuration Controls Dashboard */}
+      {/* Configuration Controls Dashboard */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
@@ -514,7 +569,6 @@ export function FileUpload() {
           </div>
         </div>
 
-        {/* 🟢 NEW DIAGRAM PRESERVATION TOGGLE 🟢 */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diagram Settings</label>
           <div 
@@ -531,65 +585,74 @@ export function FileUpload() {
         </div>
       </div>
       
-{/* REAL-TIME MINI PREVIEW SECTION */}
-<div className="col-span-1 sm:col-span-2 lg:col-span-4 mt-2 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-gray-200 dark:border-slate-800">
-  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-    <div className="min-w-0">
-      <h4 className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-slate-400 flex items-center gap-1.5">
-        <Zap className="w-3.5 h-3.5 text-blue-500" />
-        Live Print Sheet Preview
-      </h4>
-      <p className="text-[11px] text-gray-400 mt-0.5">
-        Showing arrangement for A4 Page (Current Selection: <span className="font-bold text-blue-500">{nUp}-Up</span>)
-      </p>
-    </div>
-
-    {/* Dynamic A4 Canvas Wrapper */}
-    <div className="flex-shrink-0 bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 shadow-md rounded transition-all duration-200 p-2 flex items-center justify-center relative overflow-hidden"
-      style={{
-        width: orientation === 'landscape' ? '110px' : '78px',
-        height: orientation === 'landscape' ? '78px' : '110px',
-        // Responsive edge padding rule modifications based on Gutter choices
-        paddingLeft: gutterMargin === 'left' || gutterMargin === 'alternating' ? '12px' : '6px'
-      }}
-    >
-      {/* Visual Spiral Binding Holes Gutter Line indicator */}
-      {(gutterMargin === 'left' || gutterMargin === 'alternating') && (
-        <div className="absolute left-1 top-0 bottom-0 w-1.5 border-r border-dashed border-gray-300 dark:border-slate-800 flex flex-col justify-around py-1">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="w-1 h-1 rounded-full bg-gray-300 dark:bg-slate-700 mx-auto" />
-          ))}
-        </div>
-      )}
-
-      {/* Grid Layout Solver */}
-      <div className="w-full h-full grid gap-1 transition-all duration-200"
-        style={{
-          gridTemplateColumns: `repeat(${
-            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 2 : 1) : nUp === 3 ? 1 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 3 : 2) : nUp === 8 ? (orientation === 'landscape' ? 4 : 2) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 4 : 3) : 4
-          }, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${
-            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 1 : 2) : nUp === 3 ? 3 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 2 : 3) : nUp === 8 ? (orientation === 'landscape' ? 2 : 4) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 3 : 4) : 4
-          }, minmax(0, 1fr))`
-        }}
-      >
-        {[...Array(nUp)].map((_, idx) => (
-          <div key={idx} className="bg-blue-500/20 dark:bg-blue-500/10 border border-blue-500/40 rounded flex items-center justify-center relative">
-            <span className="text-[8px] font-black text-blue-500/60">{idx + 1}</span>
+      {/* 🟢 UPGRADED: REAL-TIME LIVE API PREVIEW SECTION */}
+      <div className="col-span-1 sm:col-span-2 lg:col-span-4 mt-2 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-gray-200 dark:border-slate-800">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h4 className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-slate-400 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-blue-500" />
+              Live Print Sheet Preview
+            </h4>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Showing true rendering for an A4 Page <span className="font-bold text-blue-500">({nUp}-Up)</span>
+            </p>
           </div>
-        ))}
+
+          <div className="flex-shrink-0 bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 shadow-lg rounded transition-all duration-200 p-2 flex items-center justify-center relative overflow-hidden"
+            style={{
+              width: orientation === 'landscape' ? '180px' : '127px',
+              height: orientation === 'landscape' ? '127px' : '180px',
+              paddingLeft: gutterMargin === 'left' || gutterMargin === 'alternating' ? '12px' : '6px'
+            }}
+          >
+            {(gutterMargin === 'left' || gutterMargin === 'alternating') && (
+              <div className="absolute left-1 top-0 bottom-0 w-1.5 border-r border-dashed border-gray-300 dark:border-slate-800 flex flex-col justify-around py-1 z-20">
+                {[...Array(6)].map((_, i) => (
+                  <div key={i} className="w-1 h-1 rounded-full bg-gray-300 dark:bg-slate-700 mx-auto" />
+                ))}
+              </div>
+            )}
+
+            {/* Loading Overlay */}
+            {isPreviewLoading && (
+              <div className="absolute inset-0 bg-white/60 dark:bg-slate-950/60 backdrop-blur-[2px] z-20 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 text-blue-600 animate-spin drop-shadow-md" />
+              </div>
+            )}
+
+            {/* Live JPEG from Python OR Fallback Grid */}
+            {previewImageUrl ? (
+              <img src={previewImageUrl} className="w-full h-full object-contain z-10" alt="Live Preview" />
+            ) : (
+              <div className="w-full h-full grid gap-1 transition-all duration-200"
+                style={{
+                  gridTemplateColumns: `repeat(${
+                    nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 2 : 1) : nUp === 3 ? 1 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 3 : 2) : nUp === 8 ? (orientation === 'landscape' ? 4 : 2) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 4 : 3) : 4
+                  }, minmax(0, 1fr))`,
+                  gridTemplateRows: `repeat(${
+                    nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 1 : 2) : nUp === 3 ? 3 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 2 : 3) : nUp === 8 ? (orientation === 'landscape' ? 2 : 4) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 3 : 4) : 4
+                  }, minmax(0, 1fr))`
+                }}
+              >
+                {[...Array(nUp)].map((_, idx) => (
+                  <div key={idx} className="bg-blue-500/10 border border-blue-500/30 rounded flex items-center justify-center">
+                    <span className="text-[8px] font-black text-blue-500/40">Upload to preview</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
-  </div>
-</div>
+
       {/* Dropzone Boundary Section */}
       {!pdfJsLoaded ? (
-        <div className="h-40 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-800/10">
+        <div className="h-40 mt-6 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-800/10">
           <Loader2 className="w-6 h-6 animate-spin text-blue-500 mr-2" />
           <span className="text-sm font-medium text-gray-500">Initializing document workspace...</span>
         </div>
       ) : files.length < 25 && (
-        <div {...getRootProps()} className={`h-40 border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-6 cursor-pointer mb-6 transition-all ${isGlobalProcessing ? "opacity-50 pointer-events-none" : "border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-800/50"}`}>
+        <div {...getRootProps()} className={`h-40 mt-6 border-2 border-dashed rounded-xl flex flex-col items-center justify-center p-6 cursor-pointer mb-6 transition-all ${isGlobalProcessing ? "opacity-50 pointer-events-none" : "border-gray-300 dark:border-gray-700 hover:border-blue-500 hover:bg-gray-50 dark:hover:bg-gray-800/50"}`}>
           <input {...getInputProps()} />
           <UploadCloud className="w-10 h-10 mb-3 text-gray-400" />
           <p className="font-medium text-gray-700 dark:text-gray-200 text-center">Drag up to 25 PDFs here</p>
@@ -677,7 +740,7 @@ export function FileUpload() {
 
             <div className="w-full mt-5 space-y-2">
               <div className="flex justify-between text-[11px] text-slate-400 font-bold px-1 tracking-wide">
-                <span>Inverting Document Color Space...</span>
+                <span>Building and Compiling PDF Layouts...</span>
               </div>
               <div className="w-full bg-slate-950 border border-slate-800 rounded-full h-2 p-0.5 overflow-hidden">
                 <div className="bg-gradient-to-r from-blue-500 to-indigo-600 h-1 rounded-full animate-pulse" style={{ width: '75%' }}></div>
