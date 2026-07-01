@@ -71,10 +71,48 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
 
 # 🟢 RESTORED: Watermark logic is back for standard tools
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
-    if n_up == 1:
-        for page_num in page_indices:
-            if page_num >= len(doc): continue
-            page = doc[page_num]
+    
+    def create_new_page():
+        is_odd_sheet = (len(out_doc) % 2 == 0)
+        grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
+        new_p = out_doc.new_page(width=target_w, height=target_h)
+        if custom_watermark.strip():
+            new_p.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
+        return new_p, grid_rects, max_per_page
+
+    grid_rects, max_per_page = None, None
+    if n_up > 1 and new_page is not None:
+        is_odd_sheet = (len(out_doc) % 2 == 0)
+        grid_rects, max_per_page, _, _ = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
+
+    for page_num in page_indices:
+        if page_num >= len(doc): continue
+        page = doc[page_num]
+        
+        # 🟢 STEP 1: INVERT THE ORIGINAL PAGE FIRST (The user's sequence)
+        if do_invert:
+            annot = page.add_rect_annot(page.rect)
+            annot.set_border(width=0)
+            annot.set_colors(stroke=None, fill=(1, 1, 1))
+            annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
+            
+            if preserve_images:
+                # Extract and paste original images back over the inversion mask
+                for img_info in page.get_images():
+                    xref = img_info[0]
+                    base_image = doc.extract_image(xref)
+                    if base_image:
+                        image_bytes = base_image["image"]
+                        for rect in page.get_image_rects(xref):
+                            page.insert_image(rect, stream=image_bytes)
+
+        # Bake the page into a high-res retina Pixmap (Scanner-Quality)
+        # 2.0 Matrix equals 144 DPI: a perfect balance of crisp text and fast download speed
+        mat = fitz.Matrix(2.0, 2.0)
+        pix = page.get_pixmap(matrix=mat, annots=True)
+
+        # 🟢 STEP 2: PLACE THE INVERTED PIXMAP ONTO THE GRID
+        if n_up == 1:
             w, h = page.rect.width, page.rect.height
             is_odd = (len(out_doc) % 2 == 0)
             
@@ -88,93 +126,25 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect = fitz.Rect(0, 0, w, h)
                 new_page = out_doc.new_page(width=w, height=h)
                 
-            new_page.show_pdf_page(target_rect, doc, page_num)
+            new_page.insert_image(target_rect, pixmap=pix)
             
-            if do_invert:
-                # 1. Apply the Inversion
-                annot = new_page.add_rect_annot(target_rect)
-                annot.set_border(width=0)
-                annot.set_colors(stroke=None, fill=(1, 1, 1))
-                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-                
-                # 2. 🟢 THE MASK: Draw a white frame over the artifact edges
-                mask = new_page.add_rect_annot(target_rect)
-                mask.set_border(width=2.5) 
-                mask.set_colors(stroke=(1, 1, 1), fill=None)
-                mask.update()
-                
-                if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + rect.x0, target_rect.y0 + rect.y0,
-                                    target_rect.x0 + rect.x1, target_rect.y0 + rect.y1
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
-
             if custom_watermark.strip():
                 new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
                 
-        return 0, None
-    else:
-        is_odd_sheet = (len(out_doc) % 2 == 0)
-        grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
-
-        for page_num in page_indices:
-            if page_num >= len(doc): continue
-            page = doc[page_num]
-            
+        else:
             if new_page is None:
-                is_odd_sheet = (len(out_doc) % 2 == 0)
-                grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
-                new_page = out_doc.new_page(width=target_w, height=target_h)
-                
-                if custom_watermark.strip():
-                    new_page.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
-                
+                new_page, grid_rects, max_per_page = create_new_page()
                 current_rect_idx = 0
-                
-            target_rect = grid_rects[current_rect_idx]
-            new_page.show_pdf_page(target_rect, doc, page_num)
-            
-            if do_invert:
-                # 1. Apply the Inversion
-                annot = new_page.add_rect_annot(target_rect)
-                annot.set_border(width=0)
-                annot.set_colors(stroke=None, fill=(1, 1, 1))
-                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
 
-                # 2. 🟢 THE MASK: Draw a white frame over the artifact edges
-                mask = new_page.add_rect_annot(target_rect)
-                mask.set_border(width=2.5) 
-                mask.set_colors(stroke=(1, 1, 1), fill=None)
-                mask.update()
-                
-                if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                scale_x = target_rect.width / page.rect.width
-                                scale_y = target_rect.height / page.rect.height
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + (rect.x0 * scale_x), target_rect.y0 + (rect.y0 * scale_y),
-                                    target_rect.x0 + (rect.x1 * scale_x), target_rect.y0 + (rect.y1 * scale_y)
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
+            target_rect = grid_rects[current_rect_idx]
+            new_page.insert_image(target_rect, pixmap=pix)
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
-                new_page = None
-                
-        return current_rect_idx, new_page
+                new_page = None # Force creation of new page on next loop
+
+    return current_rect_idx, new_page
 
 # 🟢 RESTORED: Pulling the watermark string for standard tools
 @app.route('/api/v1/process-pdf', methods=['POST'])
