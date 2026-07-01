@@ -10,6 +10,7 @@ import google.generativeai as genai
 import json
 import cv2
 import numpy as np
+import base64
 
 load_dotenv()
 
@@ -69,8 +70,9 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 RESTORED: Watermark logic is back for standard tools
-def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
+
+# 🟢 NEW: Converted to a Generator to stream real-time progress to React
+def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None, file_index=1, total_files=1):
     
     def create_new_page():
         is_odd_sheet = (len(out_doc) % 2 == 0)
@@ -85,11 +87,21 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
         is_odd_sheet = (len(out_doc) % 2 == 0)
         grid_rects, max_per_page, _, _ = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
 
-    for page_num in page_indices:
+    total_pages = len(page_indices)
+
+    for idx, page_num in enumerate(page_indices):
         if page_num >= len(doc): continue
         page = doc[page_num]
         
-        # 🟢 STEP 1: INVERT THE ORIGINAL PAGE FIRST (The user's sequence)
+        # 🟢 YIELD: Streams exact progress back to the user instantly
+        yield {
+            "status": "processing",
+            "message": f"File {file_index}/{total_files} | Processing page {idx+1}/{total_pages}...",
+            "page": idx + 1,
+            "total": total_pages
+        }
+
+        # 🟢 STEP 1: INVERT THE ORIGINAL PAGE FIRST
         if do_invert:
             annot = page.add_rect_annot(page.rect)
             annot.set_border(width=0)
@@ -97,17 +109,15 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
             
             if preserve_images:
-                # Extract and paste original images back over the inversion mask
                 for img_info in page.get_images():
                     xref = img_info[0]
-f                     base_image = doc.extract_image(xref)
+                    base_image = doc.extract_image(xref)
                     if base_image:
                         image_bytes = base_image["image"]
                         for rect in page.get_image_rects(xref):
                             page.insert_image(rect, stream=image_bytes)
 
         # Bake the page into a high-res retina Pixmap (Scanner-Quality)
-        # 2.0 Matrix equals 144 DPI: a perfect balance of crisp text and fast download speed
         mat = fitz.Matrix(2.0, 2.0)
         pix = page.get_pixmap(matrix=mat, annots=True)
 
@@ -142,11 +152,11 @@ f                     base_image = doc.extract_image(xref)
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
-                new_page = None # Force creation of new page on next loop
+                new_page = None 
 
     return current_rect_idx, new_page
 
-# 🟢 RESTORED: Pulling the watermark string for standard tools
+# 🟢 NEW: Real-Time SSE Processing Stream for Single Files
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
@@ -161,21 +171,97 @@ def process_pdf_endpoint():
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
-    try:
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        out_doc = fitz.open()
-        page_indices = [int(p) for p in pages_to_keep_str.split(',')] if pages_to_keep_str.strip() else list(range(len(doc)))
-            
-        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
-            
-        output_stream = io.BytesIO()
-        out_doc.save(output_stream, garbage=4, deflate=True) 
-        out_doc.close(); doc.close()
-        output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{file.filename}", mimetype='application/pdf')
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": "Internal Server Error"}), 500
+    def generate():
+        try:
+            yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting document mapping...'})}\n\n"
+            doc = fitz.open(stream=file.read(), filetype="pdf")
+            out_doc = fitz.open()
+            page_indices = [int(p) for p in pages_to_keep_str.split(',')] if pages_to_keep_str.strip() else list(range(len(doc)))
+                
+            gen = process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+                
+            while True:
+                try:
+                    progress_data = next(gen)
+                    pct = 10 + (progress_data['page'] / progress_data['total']) * 80
+                    progress_data['progress'] = round(pct)
+                    yield f"data: {json.dumps(progress_data)}\n\n"
+                except StopIteration:
+                    break
+                
+            yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling final A4 layouts...'})}\n\n"
+            output_stream = io.BytesIO()
+            out_doc.save(output_stream, garbage=4, deflate=True)
+            out_doc.close(); doc.close()
+                
+            yield f"data: {json.dumps({'status': 'encoding', 'progress': 97, 'message': 'Encoding document for secure browser storage...'})}\n\n"
+            b64_pdf = base64.b64encode(output_stream.getvalue()).decode('utf-8')
+                
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'file_data': b64_pdf, 'filename': f'PrepPrint_Inverted_{file.filename}'})}\n\n"
+
+        except Exception as e:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return app.response_class(generate(), mimetype='text/event-stream')
+
+
+# 🟢 NEW: Real-Time SSE Processing Stream for Batch Merging
+@app.route('/api/v1/merge-pdfs', methods=['POST'])
+def merge_pdfs_endpoint():
+    if 'files' not in request.files: return jsonify({"error": "No files provided"}), 400
+    files = request.files.getlist('files')
+    if not files or files[0].filename == '': return jsonify({"error": "No selected files"}), 400
+
+    custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
+    page_maps = request.form.getlist('page_maps')
+    n_up = int(request.form.get('n_up', 1))
+    orientation = request.form.get('orientation', 'portrait')
+    gutter_type = request.form.get('gutter_margin', 'none')
+    do_invert = request.form.get('invert_colors', 'true') == 'true'
+    preserve_images = request.form.get('preserve_images', 'false') == 'true'
+    
+    def generate():
+        try:
+            yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting batch documents...'})}\n\n"
+            out_doc = fitz.open()
+            global_rect_idx, global_active_page = 0, None
+            total_files = len(files)
+                
+            for index, file in enumerate(files):
+                doc = fitz.open(stream=file.read(), filetype="pdf")
+                page_indices = [int(p) for p in page_maps[index].split(',')] if index < len(page_maps) and page_maps[index].strip() else list(range(len(doc)))
+                    
+                gen = process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images, current_rect_idx=global_rect_idx, new_page=global_active_page, file_index=index+1, total_files=total_files)
+                    
+                while True:
+                    try:
+                        progress_data = next(gen)
+                        base_pct = 10 + (index / total_files) * 80
+                        file_pct = (progress_data['page'] / progress_data['total']) * (80 / total_files)
+                        progress_data['progress'] = round(base_pct + file_pct)
+                        yield f"data: {json.dumps(progress_data)}\n\n"
+                    except StopIteration as e:
+                        global_rect_idx, global_active_page = e.value
+                        break
+                doc.close()
+
+            yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling merged layout PDF...'})}\n\n"
+            output_stream = io.BytesIO()
+            out_doc.save(output_stream, garbage=4, deflate=True)
+            out_doc.close()
+                
+            yield f"data: {json.dumps({'status': 'encoding', 'progress': 97, 'message': 'Encoding batch for secure browser storage...'})}\n\n"
+            b64_pdf = base64.b64encode(output_stream.getvalue()).decode('utf-8')
+                
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'file_data': b64_pdf, 'filename': 'PrepPrint_Merged_Bundle.pdf'})}\n\n"
+
+        except Exception as e:
+            traceback.print_exc()
+            yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    return app.response_class(generate(), mimetype='text/event-stream')
+
 
 @app.route('/api/v1/preview-layout', methods=['POST'])
 def preview_layout_endpoint():
@@ -192,67 +278,27 @@ def preview_layout_endpoint():
         doc = fitz.open(stream=file.read(), filetype="pdf")
         out_doc = fitz.open()
         
-        # 🟢 SMART LOGIC: Only grab enough pages to fill exactly ONE sheet of paper
         pages_needed = min(n_up, len(doc))
         preview_indices = list(range(pages_needed))
         
-        # Run our pristine 3-step pipeline on just those few pages
-        process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        # Must iterate through generator to execute preview
+        gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        while True:
+            try: next(gen)
+            except StopIteration: break
         
-        # 🟢 Extract that single output page and convert it instantly to a JPEG
         preview_page = out_doc[0]
-        # Use 1.5 matrix (108 DPI) for a fast-loading, crisp web preview
         pix = preview_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) 
         img_bytes = pix.tobytes("jpeg")
         
-        out_doc.close()
-        doc.close()
-        
-        io_buf = io.BytesIO(img_bytes)
-        io_buf.seek(0)
+        out_doc.close(); doc.close()
+        io_buf = io.BytesIO(img_bytes); io_buf.seek(0)
         return send_file(io_buf, mimetype='image/jpeg')
         
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": "Preview generation failed"}), 500
 
-@app.route('/api/v1/merge-pdfs', methods=['POST'])
-def merge_pdfs_endpoint():
-    if 'files' not in request.files: return jsonify({"error": "No files provided"}), 400
-    files = request.files.getlist('files')
-    if not files or files[0].filename == '': return jsonify({"error": "No selected files"}), 400
-
-    custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
-    page_maps = request.form.getlist('page_maps')
-    n_up = int(request.form.get('n_up', 1))
-    orientation = request.form.get('orientation', 'portrait')
-    gutter_type = request.form.get('gutter_margin', 'none')
-    do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
-    
-    try:
-        out_doc = fitz.open()
-        global_rect_idx, global_active_page = 0, None
-        
-        for index, file in enumerate(files):
-            doc = fitz.open(stream=file.read(), filetype="pdf")
-            page_indices = [int(p) for p in page_maps[index].split(',')] if index < len(page_maps) and page_maps[index].strip() else list(range(len(doc)))
-            
-            global_rect_idx, global_active_page = process_pdf_pages(
-                doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc,
-                do_invert=do_invert, preserve_images=preserve_images,
-                current_rect_idx=global_rect_idx, new_page=global_active_page
-            )
-            doc.close()
-            
-        output_stream = io.BytesIO()
-        out_doc.save(output_stream, garbage=4, deflate=True)
-        out_doc.close()
-        output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": "Internal Server Error during merging"}), 500
 
 @app.route('/api/v1/reduce-size', methods=['POST'])
 def reduce_size_endpoint():
@@ -299,6 +345,7 @@ def reduce_size_endpoint():
 
     except Exception as e:
         return jsonify({"error": f"Backend Error: {str(e)}"}), 500
+
 
 @app.route('/api/v1/generate-study-materials', methods=['POST'])
 def generate_study_materials():
@@ -481,7 +528,6 @@ def scan_process():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 🟢 The new Pro Scanner still remains clean of watermarks
 @app.route('/api/v1/scan/export-pdf', methods=['POST'])
 def scan_export_pdf():
     try:
