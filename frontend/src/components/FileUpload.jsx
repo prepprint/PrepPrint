@@ -7,9 +7,6 @@ export function FileUpload() {
   const [files, setFiles] = useState([]);
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
   
-  // 🟢 NEW: Dynamic API Base to completely bypass CORS in production
-  const API_BASE = import.meta.env.DEV ? 'http://localhost:5000' : '';
-  
   const [showMiniGame, setShowMiniGame] = useState(false);
   const [mergedDownloadUrl, setMergedDownloadUrl] = useState(null);
   const abortControllerRef = useRef(null);
@@ -49,6 +46,7 @@ export function FileUpload() {
     if (document.documentElement.classList.contains('dark')) setIsDarkMode(true);
   }, []);
 
+  // 🟢 RESTORED: Explicitly pointing to the Render Backend API
   useEffect(() => {
     if (files.length === 0) { setPreviewImageUrl(null); return; }
     const generatePreview = async () => {
@@ -62,8 +60,7 @@ export function FileUpload() {
         formData.append('invert_colors', invertColors);
         formData.append('preserve_images', preserveImages);
 
-        // 🟢 FIXED: Using dynamic API_BASE
-        const response = await fetch(`${API_BASE}/api/v1/preview-layout`, { method: 'POST', body: formData });
+        const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/preview-layout`, { method: 'POST', body: formData });
         if (response.ok) {
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
@@ -249,8 +246,8 @@ export function FileUpload() {
     formData.append('invert_colors', invertColors); formData.append('preserve_images', preserveImages);
 
     try {
-      // 🟢 FIXED: Using dynamic API_BASE
-      const response = await fetch(`${API_BASE}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
+      // 🟢 RESTORED: Explicitly pointing to the Render Backend API
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Server rejected');
 
       const reader = response.body.getReader();
@@ -306,8 +303,8 @@ export function FileUpload() {
     });
 
     try {
-      // 🟢 FIXED: Using dynamic API_BASE
-      const response = await fetch(`${API_BASE}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
+      // 🟢 RESTORED: Explicitly pointing to the Render Backend API
+      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Merge failed');
 
       const reader = response.body.getReader();
