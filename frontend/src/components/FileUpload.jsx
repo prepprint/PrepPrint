@@ -7,7 +7,9 @@ export function FileUpload() {
   const [files, setFiles] = useState([]);
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
   
-  // 🟢 NEW: User Flow States
+  // 🟢 NEW: Dynamic API Base to completely bypass CORS in production
+  const API_BASE = import.meta.env.DEV ? 'http://localhost:5000' : '';
+  
   const [showMiniGame, setShowMiniGame] = useState(false);
   const [mergedDownloadUrl, setMergedDownloadUrl] = useState(null);
   const abortControllerRef = useRef(null);
@@ -60,7 +62,8 @@ export function FileUpload() {
         formData.append('invert_colors', invertColors);
         formData.append('preserve_images', preserveImages);
 
-        const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/preview-layout`, { method: 'POST', body: formData });
+        // 🟢 FIXED: Using dynamic API_BASE
+        const response = await fetch(`${API_BASE}/api/v1/preview-layout`, { method: 'POST', body: formData });
         if (response.ok) {
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
@@ -235,7 +238,6 @@ export function FileUpload() {
     setSplitStart(''); setSplitEnd('');
   };
 
-  // 🟢 NEW: Server-Sent Events (SSE) Processing Engine
   const processSingleFile = async (fileId, currentFile, signal) => {
     const updateFile = (updates) => setFiles(prev => prev.map(f => f.id === fileId ? { ...f, ...updates } : f));
     updateFile({ status: 'processing', progress: 5, statusText: 'Connecting to server...' });
@@ -247,7 +249,8 @@ export function FileUpload() {
     formData.append('invert_colors', invertColors); formData.append('preserve_images', preserveImages);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
+      // 🟢 FIXED: Using dynamic API_BASE
+      const response = await fetch(`${API_BASE}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Server rejected');
 
       const reader = response.body.getReader();
@@ -270,7 +273,6 @@ export function FileUpload() {
               if (data.progress) updateFile({ progress: data.progress, statusText: data.message });
               
               if (data.status === 'complete') {
-                // Decode securely isolated file and store strictly in UI memory
                 const binaryStr = atob(data.file_data);
                 const len = binaryStr.length;
                 const bytes = new Uint8Array(len);
@@ -304,7 +306,8 @@ export function FileUpload() {
     });
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
+      // 🟢 FIXED: Using dynamic API_BASE
+      const response = await fetch(`${API_BASE}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Merge failed');
 
       const reader = response.body.getReader();
@@ -527,7 +530,7 @@ export function FileUpload() {
       {hasFiles && (
         <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 shadow-sm transition-colors">
           
-          {/* 🟢 NEW: Merged Master Download Button */}
+          {/* Merged Master Download Button */}
           {mergedDownloadUrl && (
             <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/50 rounded-xl shadow-sm">
               <h3 className="font-bold text-green-800 dark:text-green-400 mb-3 flex items-center">
@@ -587,7 +590,7 @@ export function FileUpload() {
                     </div>
                   </div>
                   
-                  {/* 🟢 NEW: Decoupled Download Action Button */}
+                  {/* Decoupled Download Action Button */}
                   {f.downloadUrl && !isMerging ? (
                     <button 
                       onClick={() => {
@@ -614,7 +617,7 @@ export function FileUpload() {
         </div>
       )}
 
-      {/* 🟢 NEW: Global Processing Status Modal */}
+      {/* Global Processing Status Modal */}
       {isGlobalProcessing && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-4">
           <div className="w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 flex flex-col">
