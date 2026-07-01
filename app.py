@@ -100,7 +100,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 # Extract and paste original images back over the inversion mask
                 for img_info in page.get_images():
                     xref = img_info[0]
-                    base_image = doc.extract_image(xref)
+f                     base_image = doc.extract_image(xref)
                     if base_image:
                         image_bytes = base_image["image"]
                         for rect in page.get_image_rects(xref):
@@ -176,6 +176,45 @@ def process_pdf_endpoint():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": "Internal Server Error"}), 500
+
+@app.route('/api/v1/preview-layout', methods=['POST'])
+def preview_layout_endpoint():
+    if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
+    file = request.files['file']
+    
+    n_up = int(request.form.get('n_up', 1))
+    orientation = request.form.get('orientation', 'portrait')
+    gutter_type = request.form.get('gutter_margin', 'none')
+    do_invert = request.form.get('invert_colors', 'true') == 'true'
+    preserve_images = request.form.get('preserve_images', 'false') == 'true'
+    
+    try:
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        out_doc = fitz.open()
+        
+        # 🟢 SMART LOGIC: Only grab enough pages to fill exactly ONE sheet of paper
+        pages_needed = min(n_up, len(doc))
+        preview_indices = list(range(pages_needed))
+        
+        # Run our pristine 3-step pipeline on just those few pages
+        process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        
+        # 🟢 Extract that single output page and convert it instantly to a JPEG
+        preview_page = out_doc[0]
+        # Use 1.5 matrix (108 DPI) for a fast-loading, crisp web preview
+        pix = preview_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) 
+        img_bytes = pix.tobytes("jpeg")
+        
+        out_doc.close()
+        doc.close()
+        
+        io_buf = io.BytesIO(img_bytes)
+        io_buf.seek(0)
+        return send_file(io_buf, mimetype='image/jpeg')
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "Preview generation failed"}), 500
 
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
 def merge_pdfs_endpoint():
