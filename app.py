@@ -21,7 +21,6 @@ TEMP_DIR = tempfile.gettempdir()
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
-# 🟢 THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -107,6 +106,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             "total": total_pages
         }
 
+        # THE SEQUENCE: 1. Invert -> 2. Preserve Images -> 3. Bake (Pixmap) -> 4. Grid
         if do_invert:
             annot = page.add_rect_annot(page.rect)
             annot.set_border(width=0)
@@ -160,6 +160,53 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
     return current_rect_idx, new_page
 
 
+@app.route('/api/v1/preview-layout', methods=['POST'])
+def preview_layout_endpoint():
+    if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
+    file = request.files['file']
+    
+    n_up = int(request.form.get('n_up', 1))
+    orientation = request.form.get('orientation', 'portrait')
+    gutter_type = request.form.get('gutter_margin', 'none')
+    do_invert = request.form.get('invert_colors', 'true') == 'true'
+    preserve_images = request.form.get('preserve_images', 'false') == 'true'
+    
+    doc = None
+    out_doc = None
+    try:
+        file_bytes = file.read()
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        out_doc = fitz.open()
+        
+        pages_needed = min(n_up, len(doc))
+        if pages_needed == 0:
+            return jsonify({"error": "Empty PDF document"}), 400
+            
+        preview_indices = list(range(pages_needed))
+        
+        gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        for _ in gen: pass  
+        
+        if len(out_doc) == 0:
+            return jsonify({"error": "Failed to map PDF pages"}), 500
+            
+        preview_page = out_doc[0]
+        pix = preview_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) 
+        img_bytes = pix.tobytes("jpeg")
+        
+        io_buf = io.BytesIO(img_bytes)
+        io_buf.seek(0)
+        return send_file(io_buf, mimetype='image/jpeg')
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": "Preview generation failed"}), 500
+    finally:
+        # 🟢 CRITICAL: Physically forces memory wipe to prevent 502 RAM Crashes
+        if out_doc: out_doc.close()
+        if doc: doc.close()
+
+
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
@@ -174,11 +221,12 @@ def process_pdf_endpoint():
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
-    # 🟢 THE FIX: Safely load file bytes before stream lifecycle begins
     file_bytes = file.read()
     filename = file.filename
     
     def generate():
+        doc = None
+        out_doc = None
         try:
             yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting document mapping...'})}\n\n"
             
@@ -202,13 +250,16 @@ def process_pdf_endpoint():
             download_id = str(uuid.uuid4())
             temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
             out_doc.save(temp_path, garbage=4, deflate=True)
-            out_doc.close(); doc.close()
                 
             yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': f'PrepPrint_Inverted_{filename}'})}\n\n"
 
         except Exception as e:
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+        finally:
+            # 🟢 CRITICAL: Memory Shield
+            if out_doc: out_doc.close()
+            if doc: doc.close()
 
     response = app.response_class(generate(), mimetype='text/event-stream')
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -231,10 +282,11 @@ def merge_pdfs_endpoint():
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
-    # 🟢 THE FIX: Safely load ALL batch files before stream lifecycle begins
     files_data = [f.read() for f in files]
     
     def generate():
+        out_doc = None
+        open_docs = []
         try:
             yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting batch documents...'})}\n\n"
             out_doc = fitz.open()
@@ -243,6 +295,7 @@ def merge_pdfs_endpoint():
                 
             for index, file_bytes in enumerate(files_data):
                 doc = fitz.open(stream=file_bytes, filetype="pdf")
+                open_docs.append(doc)
                 page_indices = [int(p) for p in page_maps[index].split(',')] if index < len(page_maps) and page_maps[index].strip() else list(range(len(doc)))
                     
                 gen = process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images, current_rect_idx=global_rect_idx, new_page=global_active_page, file_index=index+1, total_files=total_files)
@@ -258,20 +311,22 @@ def merge_pdfs_endpoint():
                         if e.value is not None:
                             global_rect_idx, global_active_page = e.value
                         break
-                doc.close()
 
             yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling merged layout PDF...'})}\n\n"
             
             download_id = str(uuid.uuid4())
             temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
             out_doc.save(temp_path, garbage=4, deflate=True)
-            out_doc.close()
                 
             yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': 'PrepPrint_Merged_Bundle.pdf'})}\n\n"
 
         except Exception as e:
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+        finally:
+            # 🟢 CRITICAL: Memory Shield (Even works across loops)
+            if out_doc: out_doc.close()
+            for d in open_docs: d.close()
 
     response = app.response_class(generate(), mimetype='text/event-stream')
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -290,46 +345,6 @@ def download_file(download_id):
         return "File expired or not found", 404
     except Exception as e:
         return str(e), 500
-
-
-@app.route('/api/v1/preview-layout', methods=['POST'])
-def preview_layout_endpoint():
-    if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
-    file = request.files['file']
-    
-    n_up = int(request.form.get('n_up', 1))
-    orientation = request.form.get('orientation', 'portrait')
-    gutter_type = request.form.get('gutter_margin', 'none')
-    do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
-    
-    try:
-        doc = fitz.open(stream=file.read(), filetype="pdf")
-        out_doc = fitz.open()
-        
-        pages_needed = min(n_up, len(doc))
-        if pages_needed == 0:
-            return jsonify({"error": "Empty PDF document"}), 400
-            
-        preview_indices = list(range(pages_needed))
-        
-        gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
-        for _ in gen: pass  
-        
-        if len(out_doc) == 0:
-            return jsonify({"error": "Failed to map PDF pages"}), 500
-            
-        preview_page = out_doc[0]
-        pix = preview_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) 
-        img_bytes = pix.tobytes("jpeg")
-        
-        out_doc.close(); doc.close()
-        io_buf = io.BytesIO(img_bytes); io_buf.seek(0)
-        return send_file(io_buf, mimetype='image/jpeg')
-        
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": "Preview generation failed"}), 500
 
 
 @app.route('/api/v1/reduce-size', methods=['POST'])

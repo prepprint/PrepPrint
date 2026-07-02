@@ -1,7 +1,6 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors, Zap, Download } from 'lucide-react';
-import { PDFDocument } from 'pdf-lib'; // 🟢 NEW: Lightning Fast Client-Side PDF Slicer
 import AdBanner from './AdBanner';
 
 export function FileUpload() {
@@ -35,6 +34,9 @@ export function FileUpload() {
 
   const canvasRef = useRef(null);
   const [gameScore, setGameScore] = useState(0);
+  
+  // 🟢 NEW: The Network Shield Ref to prevent server overload
+  const previewAbortRef = useRef(null);
 
   useEffect(() => {
     if (window.pdfjsLib) { setPdfJsLoaded(true); return; }
@@ -49,48 +51,45 @@ export function FileUpload() {
     if (document.documentElement.classList.contains('dark')) setIsDarkMode(true);
   }, []);
 
-  // 🟢 502 BAD GATEWAY FIX: Client-Side Slicing before Upload
   useEffect(() => {
     if (files.length === 0) { setPreviewImageUrl(null); return; }
     
     const generatePreview = async () => {
+      // 🟢 The Shield: Kills old requests immediately if the user clicks too fast
+      if (previewAbortRef.current) previewAbortRef.current.abort();
+      previewAbortRef.current = new AbortController();
+      const signal = previewAbortRef.current.signal;
+        
       setIsPreviewLoading(true);
       try {
-        // Read original file and extract ONLY the pages needed for the layout preview
-        const fileArrayBuffer = await files[0].file.arrayBuffer();
-        const srcDoc = await PDFDocument.load(fileArrayBuffer, { ignoreEncryption: true });
-        const previewDoc = await PDFDocument.create();
-        
-        const pagesNeeded = Math.min(nUp, srcDoc.getPageCount());
-        const copiedPages = await previewDoc.copyPages(srcDoc, Array.from({length: pagesNeeded}, (_, i) => i));
-        copiedPages.forEach(page => previewDoc.addPage(page));
-        
-        const previewBytes = await previewDoc.save();
-        const previewBlob = new Blob([previewBytes], { type: 'application/pdf' });
-
-        // Upload only the ~50KB tiny slice instead of the 50MB master file
         const formData = new FormData();
-        formData.append('file', previewBlob, 'preview_slice.pdf');
+        formData.append('file', files[0].file);
         formData.append('n_up', nUp);
         formData.append('orientation', orientation);
         formData.append('gutter_margin', gutterMargin);
         formData.append('invert_colors', invertColors);
         formData.append('preserve_images', preserveImages);
 
-        const response = await fetch(`${API_BASE}/api/v1/preview-layout`, { method: 'POST', body: formData });
+        const response = await fetch(`${API_BASE}/api/v1/preview-layout`, { 
+            method: 'POST', 
+            body: formData,
+            signal 
+        });
+        
         if (response.ok) {
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
           setPreviewImageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
         }
       } catch (err) { 
-        console.error("Preview Error:", err);
+          if (err.name !== 'AbortError') console.error("Preview failed:", err);
       } finally { 
-        setIsPreviewLoading(false); 
+          if (previewAbortRef.current?.signal === signal) setIsPreviewLoading(false); 
       }
     };
 
-    const timeoutId = setTimeout(() => generatePreview(), 500);
+    // 800ms debounce buffer gives the user time to finish clicking before talking to the server
+    const timeoutId = setTimeout(() => generatePreview(), 800);
     return () => clearTimeout(timeoutId);
   }, [files[0]?.id, nUp, orientation, gutterMargin, invertColors, preserveImages]);
 
