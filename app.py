@@ -13,17 +13,23 @@ import numpy as np
 
 load_dotenv()
 
-# 🟢 BULLETPROOF ABSOLUTE PATHS
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
-CORS(app)
+
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", 5000))
 
-# Configure Gemini AI
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 generation_config = {
   "temperature": 0.2,
@@ -31,7 +37,6 @@ generation_config = {
 }
 model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config)
 
-# Standard A4 Base Dimensions in points
 A4_PORTRAIT_W = 595
 A4_PORTRAIT_H = 842
 
@@ -69,7 +74,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 RESTORED: Watermark logic is back for standard tools
+# 🟢 PURE VECTOR LOGIC: No Pixmap Baking, No Bloated File Sizes
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
     if n_up == 1:
         for page_num in page_indices:
@@ -88,13 +93,16 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect = fitz.Rect(0, 0, w, h)
                 new_page = out_doc.new_page(width=w, height=h)
                 
+            # 1. Map the original vector page
             new_page.show_pdf_page(target_rect, doc, page_num)
             
+            # 2. Layer the mathematical inversion exactly over the bounding box
             if do_invert:
                 annot = new_page.add_rect_annot(target_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
+                # 3. Extract and re-paste images ON TOP of the inversion
                 if preserve_images:
                     for img_info in doc[page_num].get_images():
                         xref = img_info[0]
@@ -108,7 +116,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                                 )
                                 new_page.insert_image(mapped_rect, stream=image_bytes)
 
-            # RESTORED: Add watermark to single pages
             if custom_watermark.strip():
                 new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
                 
@@ -126,20 +133,23 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
                 new_page = out_doc.new_page(width=target_w, height=target_h)
                 
-                # RESTORED: Add watermark to N-up layout pages
                 if custom_watermark.strip():
                     new_page.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
                 
                 current_rect_idx = 0
                 
             target_rect = grid_rects[current_rect_idx]
+            
+            # 1. Map the original vector page into the grid slot
             new_page.show_pdf_page(target_rect, doc, page_num)
             
+            # 2. Layer the mathematical inversion perfectly over the grid slot
             if do_invert:
                 annot = new_page.add_rect_annot(target_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
+                # 3. Extract and map images onto the correct scaled coordinates
                 if preserve_images:
                     for img_info in doc[page_num].get_images():
                         xref = img_info[0]
@@ -162,7 +172,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 
         return current_rect_idx, new_page
 
-# 🟢 RESTORED: Pulling the watermark string for standard tools
+# 🟢 LIGHTNING FAST SYNCHRONOUS HTTP ROUTES
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
@@ -191,7 +201,7 @@ def process_pdf_endpoint():
         return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{file.filename}", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": "Internal Server Error"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
 def merge_pdfs_endpoint():
@@ -229,7 +239,7 @@ def merge_pdfs_endpoint():
         return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": "Internal Server Error during merging"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/reduce-size', methods=['POST'])
 def reduce_size_endpoint():
@@ -458,7 +468,6 @@ def scan_process():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# 🟢 The new Pro Scanner still remains clean of watermarks
 @app.route('/api/v1/scan/export-pdf', methods=['POST'])
 def scan_export_pdf():
     try:
@@ -548,7 +557,6 @@ def serve_assets(path):
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    # Prevent the catch-all from swallowing missing API calls
     if path.startswith('api/'):
         return "API route not found", 404
         
