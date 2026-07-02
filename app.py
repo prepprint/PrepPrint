@@ -21,6 +21,7 @@ TEMP_DIR = tempfile.gettempdir()
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
+# 🟢 THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -173,10 +174,15 @@ def process_pdf_endpoint():
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
+    # 🟢 THE FIX: Safely load file bytes before stream lifecycle begins
+    file_bytes = file.read()
+    filename = file.filename
+    
     def generate():
         try:
             yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting document mapping...'})}\n\n"
-            doc = fitz.open(stream=file.read(), filetype="pdf")
+            
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
             out_doc = fitz.open()
             page_indices = [int(p) for p in pages_to_keep_str.split(',')] if pages_to_keep_str.strip() else list(range(len(doc)))
                 
@@ -198,17 +204,16 @@ def process_pdf_endpoint():
             out_doc.save(temp_path, garbage=4, deflate=True)
             out_doc.close(); doc.close()
                 
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': f'PrepPrint_Inverted_{file.filename}'})}\n\n"
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': f'PrepPrint_Inverted_{filename}'})}\n\n"
 
         except Exception as e:
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
-    # 🟢 BULLETPROOF SSE CORS FIX
     response = app.response_class(generate(), mimetype='text/event-stream')
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Cache-Control'] = 'no-cache'
-    response.headers['X-Accel-Buffering'] = 'no' # Prevents Render from blocking the stream
+    response.headers['X-Accel-Buffering'] = 'no' 
     return response
 
 
@@ -226,15 +231,18 @@ def merge_pdfs_endpoint():
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
+    # 🟢 THE FIX: Safely load ALL batch files before stream lifecycle begins
+    files_data = [f.read() for f in files]
+    
     def generate():
         try:
             yield f"data: {json.dumps({'status': 'extracting', 'progress': 5, 'message': 'Extracting batch documents...'})}\n\n"
             out_doc = fitz.open()
             global_rect_idx, global_active_page = 0, None
-            total_files = len(files)
+            total_files = len(files_data)
                 
-            for index, file in enumerate(files):
-                doc = fitz.open(stream=file.read(), filetype="pdf")
+            for index, file_bytes in enumerate(files_data):
+                doc = fitz.open(stream=file_bytes, filetype="pdf")
                 page_indices = [int(p) for p in page_maps[index].split(',')] if index < len(page_maps) and page_maps[index].strip() else list(range(len(doc)))
                     
                 gen = process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images, current_rect_idx=global_rect_idx, new_page=global_active_page, file_index=index+1, total_files=total_files)
@@ -265,11 +273,10 @@ def merge_pdfs_endpoint():
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
-    # 🟢 BULLETPROOF SSE CORS FIX
     response = app.response_class(generate(), mimetype='text/event-stream')
     response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Cache-Control'] = 'no-cache'
-    response.headers['X-Accel-Buffering'] = 'no' # Prevents Render from blocking the stream
+    response.headers['X-Accel-Buffering'] = 'no' 
     return response
 
 
