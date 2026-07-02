@@ -10,13 +10,16 @@ import google.generativeai as genai
 import json
 import cv2
 import numpy as np
-import base64
+import uuid
+import tempfile
 
 load_dotenv()
 
-# 🟢 BULLETPROOF ABSOLUTE PATHS
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
+
+# 🟢 PILLAR 1: Secure Temporary Storage for Download Tickets
+TEMP_DIR = tempfile.gettempdir()
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 CORS(app)
@@ -24,7 +27,6 @@ CORS(app)
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", 5000))
 
-# Configure Gemini AI
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 generation_config = {
   "temperature": 0.2,
@@ -32,7 +34,6 @@ generation_config = {
 }
 model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config)
 
-# Standard A4 Base Dimensions in points
 A4_PORTRAIT_W = 595
 A4_PORTRAIT_H = 842
 
@@ -70,8 +71,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-
-# 🟢 NEW: Converted to a Generator to stream real-time progress to React
+# 🟢 PILLAR 2 & 4: Generator pattern and Flawless 3-Step Math
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None, file_index=1, total_files=1):
     
     def create_new_page():
@@ -93,7 +93,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
         if page_num >= len(doc): continue
         page = doc[page_num]
         
-        # 🟢 YIELD: Streams exact progress back to the user instantly
+        # 🟢 SSE Payload generated every page to prevent cloud timeouts
         yield {
             "status": "processing",
             "message": f"File {file_index}/{total_files} | Processing page {idx+1}/{total_pages}...",
@@ -101,7 +101,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             "total": total_pages
         }
 
-        # 🟢 STEP 1: INVERT THE ORIGINAL PAGE FIRST
         if do_invert:
             annot = page.add_rect_annot(page.rect)
             annot.set_border(width=0)
@@ -117,11 +116,10 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                         for rect in page.get_image_rects(xref):
                             page.insert_image(rect, stream=image_bytes)
 
-        # Bake the page into a high-res retina Pixmap (Scanner-Quality)
-        mat = fitz.Matrix(2.0, 2.0)
+        # 🟢 PILLAR 3: 108 DPI (1.5) Matrix for Lightning Fast Baking
+        mat = fitz.Matrix(1.5, 1.5)
         pix = page.get_pixmap(matrix=mat, annots=True)
 
-        # 🟢 STEP 2: PLACE THE INVERTED PIXMAP ONTO THE GRID
         if n_up == 1:
             w, h = page.rect.width, page.rect.height
             is_odd = (len(out_doc) % 2 == 0)
@@ -156,7 +154,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
     return current_rect_idx, new_page
 
-# 🟢 NEW: Real-Time SSE Processing Stream for Single Files
+
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
@@ -190,14 +188,14 @@ def process_pdf_endpoint():
                     break
                 
             yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling final A4 layouts...'})}\n\n"
-            output_stream = io.BytesIO()
-            out_doc.save(output_stream, garbage=4, deflate=True)
+            
+            # 🟢 PILLAR 1: Save directly to temp storage and send a Ticket ID
+            download_id = str(uuid.uuid4())
+            temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
+            out_doc.save(temp_path, garbage=4, deflate=True)
             out_doc.close(); doc.close()
                 
-            yield f"data: {json.dumps({'status': 'encoding', 'progress': 97, 'message': 'Encoding document for secure browser storage...'})}\n\n"
-            b64_pdf = base64.b64encode(output_stream.getvalue()).decode('utf-8')
-                
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'file_data': b64_pdf, 'filename': f'PrepPrint_Inverted_{file.filename}'})}\n\n"
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': f'PrepPrint_Inverted_{file.filename}'})}\n\n"
 
         except Exception as e:
             traceback.print_exc()
@@ -206,7 +204,6 @@ def process_pdf_endpoint():
     return app.response_class(generate(), mimetype='text/event-stream')
 
 
-# 🟢 NEW: Real-Time SSE Processing Stream for Batch Merging
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
 def merge_pdfs_endpoint():
     if 'files' not in request.files: return jsonify({"error": "No files provided"}), 400
@@ -242,25 +239,38 @@ def merge_pdfs_endpoint():
                         progress_data['progress'] = round(base_pct + file_pct)
                         yield f"data: {json.dumps(progress_data)}\n\n"
                     except StopIteration as e:
-                        global_rect_idx, global_active_page = e.value
+                        if e.value is not None:
+                            global_rect_idx, global_active_page = e.value
                         break
                 doc.close()
 
             yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling merged layout PDF...'})}\n\n"
-            output_stream = io.BytesIO()
-            out_doc.save(output_stream, garbage=4, deflate=True)
+            
+            download_id = str(uuid.uuid4())
+            temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
+            out_doc.save(temp_path, garbage=4, deflate=True)
             out_doc.close()
                 
-            yield f"data: {json.dumps({'status': 'encoding', 'progress': 97, 'message': 'Encoding batch for secure browser storage...'})}\n\n"
-            b64_pdf = base64.b64encode(output_stream.getvalue()).decode('utf-8')
-                
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'file_data': b64_pdf, 'filename': 'PrepPrint_Merged_Bundle.pdf'})}\n\n"
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'message': 'Ready to Download!', 'download_id': download_id, 'filename': 'PrepPrint_Merged_Bundle.pdf'})}\n\n"
 
         except Exception as e:
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
     return app.response_class(generate(), mimetype='text/event-stream')
+
+
+# 🟢 PILLAR 1: Direct File Download Route
+@app.route('/api/v1/download/<download_id>', methods=['GET'])
+def download_file(download_id):
+    try:
+        filename = request.args.get('filename', 'PrepPrint_Document.pdf')
+        temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
+        if os.path.exists(temp_path):
+            return send_file(temp_path, as_attachment=True, download_name=filename, mimetype='application/pdf')
+        return "File expired or not found", 404
+    except Exception as e:
+        return str(e), 500
 
 
 @app.route('/api/v1/preview-layout', methods=['POST'])
@@ -281,7 +291,6 @@ def preview_layout_endpoint():
         pages_needed = min(n_up, len(doc))
         preview_indices = list(range(pages_needed))
         
-        # Must iterate through generator to execute preview
         gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
         while True:
             try: next(gen)
@@ -346,7 +355,6 @@ def reduce_size_endpoint():
     except Exception as e:
         return jsonify({"error": f"Backend Error: {str(e)}"}), 500
 
-
 @app.route('/api/v1/generate-study-materials', methods=['POST'])
 def generate_study_materials():
     try:
@@ -385,8 +393,7 @@ def scan_detect_corners():
         
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if image is None:
-            return jsonify({"error": "Invalid image"}), 400
+        if image is None: return jsonify({"error": "Invalid image"}), 400
         
         orig_h, orig_w = image.shape[:2]
         ratio = orig_h / 500.0
@@ -427,15 +434,13 @@ def scan_process():
     try:
         if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
         file = request.files['file']
-        
         corners_str = request.form.get('corners')
         filter_mode = request.form.get('filter_mode', 'color_enhanced')
 
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-        if image is None:
-            return jsonify({"error": "Backend could not decode image. Verify format."}), 400
+        if image is None: return jsonify({"error": "Backend could not decode image."}), 400
             
         MAX_DIMENSION = 1600
         h, w = image.shape[:2]
@@ -448,7 +453,6 @@ def scan_process():
         if corners_str:
             pts_dict = json.loads(corners_str)
             pts = np.array([[(p['x'] / 100.0) * orig_w, (p['y'] / 100.0) * orig_h] for p in pts_dict], dtype="float32")
-            
             rect = order_points(pts)
             (tl, tr, br, bl) = rect
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
@@ -521,7 +525,6 @@ def scan_process():
         is_success, buffer = cv2.imencode(".jpg", final_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         io_buf = io.BytesIO(buffer)
         io_buf.seek(0)
-        
         return send_file(io_buf, mimetype='image/jpeg', as_attachment=True, download_name="Enhanced_Document.jpg")
 
     except Exception as e:
@@ -532,7 +535,6 @@ def scan_process():
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
-        
         if not files: return jsonify({"error": "No files provided"}), 400
 
         doc = fitz.open()
@@ -541,30 +543,23 @@ def scan_export_pdf():
         for file in files:
             img_bytes = file.read()
             page = doc.new_page(width=A4_W, height=A4_H)
-            
             img = Image.open(io.BytesIO(img_bytes))
             img_w, img_h = img.width, img.height
-            
             img_ratio = img_w / img_h
             page_ratio = A4_W / A4_H
             
             if img_ratio > page_ratio:
-                new_w = A4_W
-                new_h = A4_W / img_ratio
+                new_w, new_h = A4_W, A4_W / img_ratio
             else:
-                new_h = A4_H
-                new_w = A4_H * img_ratio
+                new_h, new_w = A4_H, A4_H * img_ratio
                 
-            x = (A4_W - new_w) / 2
-            y = (A4_H - new_h) / 2
-            
+            x, y = (A4_W - new_w) / 2, (A4_H - new_h) / 2
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
         output_stream = io.BytesIO()
         doc.save(output_stream, garbage=4, deflate=True)
         doc.close()
         output_stream.seek(0)
-        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
     except Exception as e:
         traceback.print_exc()
@@ -590,7 +585,6 @@ def generate_passport_sheet():
             for col in range(2):
                 x0 = margin_x + col * (PHOTO_W + margin_x)
                 y0 = margin_y + row * (PHOTO_H + margin_y)
-                
                 rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
                 page.insert_image(rect, stream=img_bytes)
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
@@ -599,15 +593,10 @@ def generate_passport_sheet():
         doc.save(output_stream, garbage=4, deflate=True)
         doc.close()
         output_stream.seek(0)
-        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-# ==========================================
-# 🟢 BULLETPROOF CATCH-ALL ROUTING
-# ==========================================
 
 @app.route('/assets/<path:path>')
 def serve_assets(path):
@@ -617,7 +606,6 @@ def serve_assets(path):
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    # Prevent the catch-all from swallowing missing API calls
     if path.startswith('api/'):
         return "API route not found", 404
         

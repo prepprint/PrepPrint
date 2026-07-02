@@ -46,7 +46,6 @@ export function FileUpload() {
     if (document.documentElement.classList.contains('dark')) setIsDarkMode(true);
   }, []);
 
-  // 🟢 RESTORED: Explicitly pointing to the Render Backend API
   useEffect(() => {
     if (files.length === 0) { setPreviewImageUrl(null); return; }
     const generatePreview = async () => {
@@ -246,7 +245,6 @@ export function FileUpload() {
     formData.append('invert_colors', invertColors); formData.append('preserve_images', preserveImages);
 
     try {
-      // 🟢 RESTORED: Explicitly pointing to the Render Backend API
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Server rejected');
 
@@ -270,13 +268,7 @@ export function FileUpload() {
               if (data.progress) updateFile({ progress: data.progress, statusText: data.message });
               
               if (data.status === 'complete') {
-                const binaryStr = atob(data.file_data);
-                const len = binaryStr.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i);
-                
-                const blob = new Blob([bytes], { type: 'application/pdf' });
-                const downloadUrl = window.URL.createObjectURL(blob);
+                const downloadUrl = `${import.meta.env.VITE_API_URL}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
                 updateFile({ status: 'success', progress: 100, statusText: 'Ready to Download!', downloadUrl, finalFilename: data.filename });
               }
             } catch(e) { console.error("Parse Stream Error", e); }
@@ -303,7 +295,6 @@ export function FileUpload() {
     });
 
     try {
-      // 🟢 RESTORED: Explicitly pointing to the Render Backend API
       const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Merge failed');
 
@@ -327,13 +318,7 @@ export function FileUpload() {
               if (data.progress) setFiles(prev => prev.map(f => ({ ...f, progress: data.progress, statusText: data.message })));
               
               if (data.status === 'complete') {
-                const binaryStr = atob(data.file_data);
-                const len = binaryStr.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i);
-                
-                const blob = new Blob([bytes], { type: 'application/pdf' });
-                const downloadUrl = window.URL.createObjectURL(blob);
+                const downloadUrl = `${import.meta.env.VITE_API_URL}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
                 setFiles(prev => prev.map(f => ({ ...f, status: 'success', progress: 100, statusText: 'Bundle Ready!' })));
                 setMergedDownloadUrl({ url: downloadUrl, filename: data.filename });
               }
