@@ -75,7 +75,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 PURE VECTOR LOGIC: No Pixmap Baking. Strict Step Sequence.
+# 🟢 PURE VECTOR LOGIC: The Perfect Stacking Sequence
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
     
     def create_new_page():
@@ -103,34 +103,34 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect = fitz.Rect(36, 0, w + 36, h)
                 new_page = out_doc.new_page(width=w + 36, height=h)
             elif gutter_type == 'alternating':
-                target_rect = fitz.Rect(36 if is_odd else 0, 0, w + (36 if is_odd else 0), h)
+                target_rect = fitz.Rect(36 if is_odd else 0, w + (36 if is_odd else 0), h)
                 new_page = out_doc.new_page(width=w + 36, height=h)
             else:
                 target_rect = fitz.Rect(0, 0, w, h)
                 new_page = out_doc.new_page(width=w, height=h)
                 
-            # 🟢 STEP 1: Execute mathematical inversion layer FIRST
+            # STEP 1: Lay down the original page content FIRST
+            new_page.show_pdf_page(target_rect, doc, page_num)
+            
+            # STEP 2: Apply the mathematical inversion layer OVER the content
             if do_invert:
                 annot = new_page.add_rect_annot(target_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
-            # 🟢 STEP 2: Map the original vector page UNDER the inversion layer
-            new_page.show_pdf_page(target_rect, doc, page_num)
-            
-            # 🟢 STEP 3: Extract and paste diagrams to preserve their original colors
-            if do_invert and preserve_images:
-                for img_info in doc[page_num].get_images():
-                    xref = img_info[0]
-                    base_image = doc.extract_image(xref)
-                    if base_image:
-                        image_bytes = base_image["image"]
-                        for rect in doc[page_num].get_image_rects(xref):
-                            mapped_rect = fitz.Rect(
-                                target_rect.x0 + rect.x0, target_rect.y0 + rect.y0,
-                                target_rect.x0 + rect.x1, target_rect.y0 + rect.y1
-                            )
-                            new_page.insert_image(mapped_rect, stream=image_bytes)
+                # STEP 3: Smart Preserve - Paste the original photos OVER the inversion
+                if preserve_images:
+                    for img_info in doc[page_num].get_images():
+                        xref = img_info[0]
+                        base_image = doc.extract_image(xref)
+                        if base_image:
+                            image_bytes = base_image["image"]
+                            for rect in doc[page_num].get_image_rects(xref):
+                                mapped_rect = fitz.Rect(
+                                    target_rect.x0 + rect.x0, target_rect.y0 + rect.y0,
+                                    target_rect.x0 + rect.x1, target_rect.y0 + rect.y1
+                                )
+                                new_page.insert_image(mapped_rect, stream=image_bytes)
 
             if custom_watermark.strip():
                 new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
@@ -142,30 +142,30 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
             target_rect = grid_rects[current_rect_idx]
             
-            # 🟢 STEP 1: Execute mathematical inversion layer FIRST
+            # STEP 1: Lay down the original page content FIRST
+            new_page.show_pdf_page(target_rect, doc, page_num)
+            
+            # STEP 2: Apply the mathematical inversion layer OVER the content
             if do_invert:
                 annot = new_page.add_rect_annot(target_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
-            # 🟢 STEP 2: Map the original vector page UNDER the inversion layer
-            new_page.show_pdf_page(target_rect, doc, page_num)
-            
-            # 🟢 STEP 3: Extract and paste diagrams to preserve their original colors
-            if do_invert and preserve_images:
-                for img_info in doc[page_num].get_images():
-                    xref = img_info[0]
-                    base_image = doc.extract_image(xref)
-                    if base_image:
-                        image_bytes = base_image["image"]
-                        for rect in doc[page_num].get_image_rects(xref):
-                            scale_x = target_rect.width / page.rect.width
-                            scale_y = target_rect.height / page.rect.height
-                            mapped_rect = fitz.Rect(
-                                target_rect.x0 + (rect.x0 * scale_x), target_rect.y0 + (rect.y0 * scale_y),
-                                target_rect.x0 + (rect.x1 * scale_x), target_rect.y0 + (rect.y1 * scale_y)
-                            )
-                            new_page.insert_image(mapped_rect, stream=image_bytes)
+                # STEP 3: Smart Preserve - Paste the original photos OVER the inversion
+                if preserve_images:
+                    for img_info in doc[page_num].get_images():
+                        xref = img_info[0]
+                        base_image = doc.extract_image(xref)
+                        if base_image:
+                            image_bytes = base_image["image"]
+                            for rect in doc[page_num].get_image_rects(xref):
+                                scale_x = target_rect.width / page.rect.width
+                                scale_y = target_rect.height / page.rect.height
+                                mapped_rect = fitz.Rect(
+                                    target_rect.x0 + (rect.x0 * scale_x), target_rect.y0 + (rect.y0 * scale_y),
+                                    target_rect.x0 + (rect.x1 * scale_x), target_rect.y0 + (rect.y1 * scale_y)
+                                )
+                                new_page.insert_image(mapped_rect, stream=image_bytes)
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
@@ -327,8 +327,7 @@ def scan_detect_corners():
         
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if image is None:
-            return jsonify({"error": "Invalid image"}), 400
+        if image is None: return jsonify({"error": "Invalid image"}), 400
         
         orig_h, orig_w = image.shape[:2]
         ratio = orig_h / 500.0
@@ -369,15 +368,13 @@ def scan_process():
     try:
         if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
         file = request.files['file']
-        
         corners_str = request.form.get('corners')
         filter_mode = request.form.get('filter_mode', 'color_enhanced')
 
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-        if image is None:
-            return jsonify({"error": "Backend could not decode image. Verify format."}), 400
+        if image is None: return jsonify({"error": "Backend could not decode image."}), 400
             
         MAX_DIMENSION = 1600
         h, w = image.shape[:2]
@@ -390,7 +387,6 @@ def scan_process():
         if corners_str:
             pts_dict = json.loads(corners_str)
             pts = np.array([[(p['x'] / 100.0) * orig_w, (p['y'] / 100.0) * orig_h] for p in pts_dict], dtype="float32")
-            
             rect = order_points(pts)
             (tl, tr, br, bl) = rect
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
@@ -463,7 +459,6 @@ def scan_process():
         is_success, buffer = cv2.imencode(".jpg", final_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         io_buf = io.BytesIO(buffer)
         io_buf.seek(0)
-        
         return send_file(io_buf, mimetype='image/jpeg', as_attachment=True, download_name="Enhanced_Document.jpg")
 
     except Exception as e:
@@ -474,7 +469,6 @@ def scan_process():
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
-        
         if not files: return jsonify({"error": "No files provided"}), 400
 
         doc = fitz.open()
@@ -483,30 +477,23 @@ def scan_export_pdf():
         for file in files:
             img_bytes = file.read()
             page = doc.new_page(width=A4_W, height=A4_H)
-            
             img = Image.open(io.BytesIO(img_bytes))
             img_w, img_h = img.width, img.height
-            
             img_ratio = img_w / img_h
             page_ratio = A4_W / A4_H
             
             if img_ratio > page_ratio:
-                new_w = A4_W
-                new_h = A4_W / img_ratio
+                new_w, new_h = A4_W, A4_W / img_ratio
             else:
-                new_h = A4_H
-                new_w = A4_H * img_ratio
+                new_h, new_w = A4_H, A4_H * img_ratio
                 
-            x = (A4_W - new_w) / 2
-            y = (A4_H - new_h) / 2
-            
+            x, y = (A4_W - new_w) / 2, (A4_H - new_h) / 2
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
         output_stream = io.BytesIO()
         doc.save(output_stream, garbage=4, deflate=True)
         doc.close()
         output_stream.seek(0)
-        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
     except Exception as e:
         traceback.print_exc()
@@ -532,7 +519,6 @@ def generate_passport_sheet():
             for col in range(2):
                 x0 = margin_x + col * (PHOTO_W + margin_x)
                 y0 = margin_y + row * (PHOTO_H + margin_y)
-                
                 rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
                 page.insert_image(rect, stream=img_bytes)
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
@@ -541,7 +527,6 @@ def generate_passport_sheet():
         doc.save(output_stream, garbage=4, deflate=True)
         doc.close()
         output_stream.seek(0)
-        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
     except Exception as e:
         traceback.print_exc()
