@@ -251,6 +251,7 @@ export default function DocumentScanner() {
     if (filterName === 'Text Clear (OCR)') adjs = { brightness: 120, contrast: 180, saturation: 100, grayscale: 100, sharpness: 100, shadowRemoval: 80 };
     if (filterName === 'Magic Color') adjs = { brightness: 110, contrast: 130, saturation: 140, grayscale: 0, sharpness: 20, shadowRemoval: 40 };
     if (filterName === 'B&W Scan') adjs = { brightness: 105, contrast: 150, saturation: 100, grayscale: 100, sharpness: 50, shadowRemoval: 0 };
+    
     applyRealTimeFilters(adjs);
   };
 

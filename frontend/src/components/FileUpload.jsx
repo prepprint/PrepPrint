@@ -10,7 +10,7 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [invertColors, setInvertColors] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [preserveImages, setPreserveImages] = useState(false); 
+  const [preserveImages, setPreserveImages] = useState(false); // 🟢 The New State
 
   // Platform Layout Settings
   const [nUp, setNUp] = useState(1);
@@ -446,7 +446,9 @@ export function FileUpload() {
   return (
     <div className="w-full max-w-5xl mx-auto mt-8 px-4">
       
-      {/* Configuration Controls Dashboard */}
+      {/* 🟢 TOP AD BANNER PLACEMENT 🟢 */}
+
+{/* Configuration Controls Dashboard */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
@@ -512,6 +514,7 @@ export function FileUpload() {
           </div>
         </div>
 
+        {/* 🟢 NEW DIAGRAM PRESERVATION TOGGLE 🟢 */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diagram Settings</label>
           <div 
@@ -528,6 +531,57 @@ export function FileUpload() {
         </div>
       </div>
       
+{/* REAL-TIME MINI PREVIEW SECTION */}
+<div className="col-span-1 sm:col-span-2 lg:col-span-4 mt-2 p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-gray-200 dark:border-slate-800">
+  <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div className="min-w-0">
+      <h4 className="text-xs font-black uppercase tracking-wider text-gray-500 dark:text-slate-400 flex items-center gap-1.5">
+        <Zap className="w-3.5 h-3.5 text-blue-500" />
+        Live Print Sheet Preview
+      </h4>
+      <p className="text-[11px] text-gray-400 mt-0.5">
+        Showing arrangement for A4 Page (Current Selection: <span className="font-bold text-blue-500">{nUp}-Up</span>)
+      </p>
+    </div>
+
+    {/* Dynamic A4 Canvas Wrapper */}
+    <div className="flex-shrink-0 bg-white dark:bg-slate-950 border border-gray-300 dark:border-slate-700 shadow-md rounded transition-all duration-200 p-2 flex items-center justify-center relative overflow-hidden"
+      style={{
+        width: orientation === 'landscape' ? '110px' : '78px',
+        height: orientation === 'landscape' ? '78px' : '110px',
+        // Responsive edge padding rule modifications based on Gutter choices
+        paddingLeft: gutterMargin === 'left' || gutterMargin === 'alternating' ? '12px' : '6px'
+      }}
+    >
+      {/* Visual Spiral Binding Holes Gutter Line indicator */}
+      {(gutterMargin === 'left' || gutterMargin === 'alternating') && (
+        <div className="absolute left-1 top-0 bottom-0 w-1.5 border-r border-dashed border-gray-300 dark:border-slate-800 flex flex-col justify-around py-1">
+          {[...Array(6)].map((_, i) => (
+            <div key={i} className="w-1 h-1 rounded-full bg-gray-300 dark:bg-slate-700 mx-auto" />
+          ))}
+        </div>
+      )}
+
+      {/* Grid Layout Solver */}
+      <div className="w-full h-full grid gap-1 transition-all duration-200"
+        style={{
+          gridTemplateColumns: `repeat(${
+            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 2 : 1) : nUp === 3 ? 1 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 3 : 2) : nUp === 8 ? (orientation === 'landscape' ? 4 : 2) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 4 : 3) : 4
+          }, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${
+            nUp === 1 ? 1 : nUp === 2 ? (orientation === 'landscape' ? 1 : 2) : nUp === 3 ? 3 : nUp === 4 ? 2 : nUp === 6 ? (orientation === 'landscape' ? 2 : 3) : nUp === 8 ? (orientation === 'landscape' ? 2 : 4) : nUp === 9 ? 3 : nUp === 12 ? (orientation === 'landscape' ? 3 : 4) : 4
+          }, minmax(0, 1fr))`
+        }}
+      >
+        {[...Array(nUp)].map((_, idx) => (
+          <div key={idx} className="bg-blue-500/20 dark:bg-blue-500/10 border border-blue-500/40 rounded flex items-center justify-center relative">
+            <span className="text-[8px] font-black text-blue-500/60">{idx + 1}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</div>
       {/* Dropzone Boundary Section */}
       {!pdfJsLoaded ? (
         <div className="h-40 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center p-6 bg-gray-50 dark:bg-gray-800/10">
