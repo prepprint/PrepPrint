@@ -7,6 +7,9 @@ export function FileUpload() {
   const [files, setFiles] = useState([]);
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
   
+  // 🟢 THE BULLETPROOF URL GENERATOR: Strips trailing slashes to prevent 308 Redirect CORS masks
+  const API_BASE = (import.meta.env.VITE_API_URL || 'https://prepprint.onrender.com').replace(/\/$/, '');
+  
   const [showMiniGame, setShowMiniGame] = useState(false);
   const [mergedDownloadUrl, setMergedDownloadUrl] = useState(null);
   const abortControllerRef = useRef(null);
@@ -59,7 +62,7 @@ export function FileUpload() {
         formData.append('invert_colors', invertColors);
         formData.append('preserve_images', preserveImages);
 
-        const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/preview-layout`, { method: 'POST', body: formData });
+        const response = await fetch(`${API_BASE}/api/v1/preview-layout`, { method: 'POST', body: formData });
         if (response.ok) {
           const blob = await response.blob();
           const url = URL.createObjectURL(blob);
@@ -245,7 +248,7 @@ export function FileUpload() {
     formData.append('invert_colors', invertColors); formData.append('preserve_images', preserveImages);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
+      const response = await fetch(`${API_BASE}/api/v1/process-pdf`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Server rejected');
 
       const reader = response.body.getReader();
@@ -268,7 +271,7 @@ export function FileUpload() {
               if (data.progress) updateFile({ progress: data.progress, statusText: data.message });
               
               if (data.status === 'complete') {
-                const downloadUrl = `${import.meta.env.VITE_API_URL}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
+                const downloadUrl = `${API_BASE}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
                 updateFile({ status: 'success', progress: 100, statusText: 'Ready to Download!', downloadUrl, finalFilename: data.filename });
               }
             } catch(e) { console.error("Parse Stream Error", e); }
@@ -295,7 +298,7 @@ export function FileUpload() {
     });
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
+      const response = await fetch(`${API_BASE}/api/v1/merge-pdfs`, { method: 'POST', body: formData, signal });
       if (!response.ok) throw new Error('Merge failed');
 
       const reader = response.body.getReader();
@@ -318,7 +321,7 @@ export function FileUpload() {
               if (data.progress) setFiles(prev => prev.map(f => ({ ...f, progress: data.progress, statusText: data.message })));
               
               if (data.status === 'complete') {
-                const downloadUrl = `${import.meta.env.VITE_API_URL}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
+                const downloadUrl = `${API_BASE}/api/v1/download/${data.download_id}?filename=${encodeURIComponent(data.filename)}`;
                 setFiles(prev => prev.map(f => ({ ...f, status: 'success', progress: 100, statusText: 'Bundle Ready!' })));
                 setMergedDownloadUrl({ url: downloadUrl, filename: data.filename });
               }

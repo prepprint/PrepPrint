@@ -17,12 +17,19 @@ load_dotenv()
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
-
-# 🟢 PILLAR 1: Secure Temporary Storage for Download Tickets
 TEMP_DIR = tempfile.gettempdir()
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
-CORS(app)
+
+# 🟢 THE NUCLEAR CORS FIX: Forces cross-origin approval globally
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    return response
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", 5000))
@@ -71,7 +78,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 PILLAR 2 & 4: Generator pattern and Flawless 3-Step Math
+
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None, file_index=1, total_files=1):
     
     def create_new_page():
@@ -93,7 +100,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
         if page_num >= len(doc): continue
         page = doc[page_num]
         
-        # 🟢 SSE Payload generated every page to prevent cloud timeouts
         yield {
             "status": "processing",
             "message": f"File {file_index}/{total_files} | Processing page {idx+1}/{total_pages}...",
@@ -116,7 +122,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                         for rect in page.get_image_rects(xref):
                             page.insert_image(rect, stream=image_bytes)
 
-        # 🟢 PILLAR 3: 108 DPI (1.5) Matrix for Lightning Fast Baking
         mat = fitz.Matrix(1.5, 1.5)
         pix = page.get_pixmap(matrix=mat, annots=True)
 
@@ -189,7 +194,6 @@ def process_pdf_endpoint():
                 
             yield f"data: {json.dumps({'status': 'compiling', 'progress': 92, 'message': 'Compiling final A4 layouts...'})}\n\n"
             
-            # 🟢 PILLAR 1: Save directly to temp storage and send a Ticket ID
             download_id = str(uuid.uuid4())
             temp_path = os.path.join(TEMP_DIR, f"{download_id}.pdf")
             out_doc.save(temp_path, garbage=4, deflate=True)
@@ -260,7 +264,6 @@ def merge_pdfs_endpoint():
     return app.response_class(generate(), mimetype='text/event-stream')
 
 
-# 🟢 PILLAR 1: Direct File Download Route
 @app.route('/api/v1/download/<download_id>', methods=['GET'])
 def download_file(download_id):
     try:
@@ -289,13 +292,17 @@ def preview_layout_endpoint():
         out_doc = fitz.open()
         
         pages_needed = min(n_up, len(doc))
+        if pages_needed == 0:
+            return jsonify({"error": "Empty PDF document"}), 400
+            
         preview_indices = list(range(pages_needed))
         
         gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
-        while True:
-            try: next(gen)
-            except StopIteration: break
+        for _ in gen: pass  # Safely exhaust the generator without crashing
         
+        if len(out_doc) == 0:
+            return jsonify({"error": "Failed to map PDF pages"}), 500
+            
         preview_page = out_doc[0]
         pix = preview_page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5)) 
         img_bytes = pix.tobytes("jpeg")
