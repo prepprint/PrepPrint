@@ -1,13 +1,13 @@
 import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { UploadCloud, FileText, X, Loader2, CheckCircle, AlertCircle, Layers, ChevronUp, ChevronDown, Eye, Trash2, Scissors, Zap, Download } from 'lucide-react';
+import { PDFDocument } from 'pdf-lib'; // 🟢 NEW: Lightning Fast Client-Side PDF Slicer
 import AdBanner from './AdBanner';
 
 export function FileUpload() {
   const [files, setFiles] = useState([]);
   const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
   
-  // 🟢 THE BULLETPROOF URL GENERATOR: Strips trailing slashes to prevent 308 Redirect CORS masks
   const API_BASE = (import.meta.env.VITE_API_URL || 'https://prepprint.onrender.com').replace(/\/$/, '');
   
   const [showMiniGame, setShowMiniGame] = useState(false);
@@ -49,13 +49,28 @@ export function FileUpload() {
     if (document.documentElement.classList.contains('dark')) setIsDarkMode(true);
   }, []);
 
+  // 🟢 502 BAD GATEWAY FIX: Client-Side Slicing before Upload
   useEffect(() => {
     if (files.length === 0) { setPreviewImageUrl(null); return; }
+    
     const generatePreview = async () => {
       setIsPreviewLoading(true);
       try {
+        // Read original file and extract ONLY the pages needed for the layout preview
+        const fileArrayBuffer = await files[0].file.arrayBuffer();
+        const srcDoc = await PDFDocument.load(fileArrayBuffer, { ignoreEncryption: true });
+        const previewDoc = await PDFDocument.create();
+        
+        const pagesNeeded = Math.min(nUp, srcDoc.getPageCount());
+        const copiedPages = await previewDoc.copyPages(srcDoc, Array.from({length: pagesNeeded}, (_, i) => i));
+        copiedPages.forEach(page => previewDoc.addPage(page));
+        
+        const previewBytes = await previewDoc.save();
+        const previewBlob = new Blob([previewBytes], { type: 'application/pdf' });
+
+        // Upload only the ~50KB tiny slice instead of the 50MB master file
         const formData = new FormData();
-        formData.append('file', files[0].file);
+        formData.append('file', previewBlob, 'preview_slice.pdf');
         formData.append('n_up', nUp);
         formData.append('orientation', orientation);
         formData.append('gutter_margin', gutterMargin);
@@ -68,7 +83,11 @@ export function FileUpload() {
           const url = URL.createObjectURL(blob);
           setPreviewImageUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
         }
-      } catch (err) { } finally { setIsPreviewLoading(false); }
+      } catch (err) { 
+        console.error("Preview Error:", err);
+      } finally { 
+        setIsPreviewLoading(false); 
+      }
     };
 
     const timeoutId = setTimeout(() => generatePreview(), 500);
