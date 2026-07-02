@@ -21,7 +21,6 @@ TEMP_DIR = tempfile.gettempdir()
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
-# 🟢 THE NUCLEAR CORS FIX: Forces cross-origin approval globally
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -205,7 +204,12 @@ def process_pdf_endpoint():
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
-    return app.response_class(generate(), mimetype='text/event-stream')
+    # 🟢 BULLETPROOF SSE CORS FIX
+    response = app.response_class(generate(), mimetype='text/event-stream')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no' # Prevents Render from blocking the stream
+    return response
 
 
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
@@ -261,7 +265,12 @@ def merge_pdfs_endpoint():
             traceback.print_exc()
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
-    return app.response_class(generate(), mimetype='text/event-stream')
+    # 🟢 BULLETPROOF SSE CORS FIX
+    response = app.response_class(generate(), mimetype='text/event-stream')
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Cache-Control'] = 'no-cache'
+    response.headers['X-Accel-Buffering'] = 'no' # Prevents Render from blocking the stream
+    return response
 
 
 @app.route('/api/v1/download/<download_id>', methods=['GET'])
@@ -298,7 +307,7 @@ def preview_layout_endpoint():
         preview_indices = list(range(pages_needed))
         
         gen = process_pdf_pages(doc, preview_indices, "", n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
-        for _ in gen: pass  # Safely exhaust the generator without crashing
+        for _ in gen: pass  
         
         if len(out_doc) == 0:
             return jsonify({"error": "Failed to map PDF pages"}), 500
