@@ -2,6 +2,7 @@ import os
 import fitz  # PyMuPDF
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import io
 import traceback
 from dotenv import load_dotenv
@@ -18,7 +19,6 @@ DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
-# 🟢 THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -75,8 +75,8 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 PURE VECTOR LOGIC: The Perfect Stacking Sequence
-def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
+
+def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, current_rect_idx=0, new_page=None):
     
     def create_new_page():
         is_odd_sheet = (len(out_doc) % 2 == 0)
@@ -94,46 +94,39 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
     for page_num in page_indices:
         if page_num >= len(doc): continue
         page = doc[page_num]
+        
+        # 🟢 SEQUENCE STEP 1: INVERT FIRST
+        if do_invert:
+            annot = page.add_rect_annot(page.rect)
+            annot.set_border(width=0)
+            annot.set_colors(stroke=None, fill=(1, 1, 1))
+            annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
+            
+        # 🟢 SEQUENCE STEP 2: QUALITY 144 DPI (Bake the inverted page)
+        mat = fitz.Matrix(2.0, 2.0)
+        pix = page.get_pixmap(matrix=mat, annots=True)
+        
+        slide_w = page.rect.width
+        slide_h = page.rect.height
 
+        # 🟢 SEQUENCE STEP 3: N-UP PLACEMENT
         if n_up == 1:
-            w, h = page.rect.width, page.rect.height
             is_odd = (len(out_doc) % 2 == 0)
             
             if gutter_type == 'left':
-                target_rect = fitz.Rect(36, 0, w + 36, h)
-                new_page = out_doc.new_page(width=w + 36, height=h)
+                fit_rect = fitz.Rect(36, 0, slide_w + 36, slide_h)
+                new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
             elif gutter_type == 'alternating':
-                target_rect = fitz.Rect(36 if is_odd else 0, w + (36 if is_odd else 0), h)
-                new_page = out_doc.new_page(width=w + 36, height=h)
+                fit_rect = fitz.Rect(36 if is_odd else 0, 0, slide_w + (36 if is_odd else 0), slide_h)
+                new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
             else:
-                target_rect = fitz.Rect(0, 0, w, h)
-                new_page = out_doc.new_page(width=w, height=h)
+                fit_rect = fitz.Rect(0, 0, slide_w, slide_h)
+                new_page = out_doc.new_page(width=slide_w, height=slide_h)
                 
-            # STEP 1: Lay down the original page content FIRST
-            new_page.show_pdf_page(target_rect, doc, page_num)
-            
-            # STEP 2: Apply the mathematical inversion layer OVER the content
-            if do_invert:
-                annot = new_page.add_rect_annot(target_rect)
-                annot.set_colors(stroke=None, fill=(1, 1, 1))
-                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-                
-                # STEP 3: Smart Preserve - Paste the original photos OVER the inversion
-                if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + rect.x0, target_rect.y0 + rect.y0,
-                                    target_rect.x0 + rect.x1, target_rect.y0 + rect.y1
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
+            new_page.insert_image(fit_rect, pixmap=pix)
 
             if custom_watermark.strip():
-                new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
+                new_page.insert_text((20, slide_h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
                 
         else:
             if new_page is None:
@@ -142,44 +135,43 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
             target_rect = grid_rects[current_rect_idx]
             
-            # STEP 1: Lay down the original page content FIRST
-            new_page.show_pdf_page(target_rect, doc, page_num)
+            target_w = target_rect.width
+            target_h = target_rect.height
+            scale = min(target_w / slide_w, target_h / slide_h)
             
-            # STEP 2: Apply the mathematical inversion layer OVER the content
-            if do_invert:
-                annot = new_page.add_rect_annot(target_rect)
-                annot.set_colors(stroke=None, fill=(1, 1, 1))
-                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-                
-                # STEP 3: Smart Preserve - Paste the original photos OVER the inversion
-                if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                scale_x = target_rect.width / page.rect.width
-                                scale_y = target_rect.height / page.rect.height
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + (rect.x0 * scale_x), target_rect.y0 + (rect.y0 * scale_y),
-                                    target_rect.x0 + (rect.x1 * scale_x), target_rect.y0 + (rect.y1 * scale_y)
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
+            fit_w = slide_w * scale
+            fit_h = slide_h * scale
+            dx = (target_w - fit_w) / 2
+            dy = (target_h - fit_h) / 2
+            
+            fit_rect = fitz.Rect(
+                target_rect.x0 + dx,
+                target_rect.y0 + dy,
+                target_rect.x0 + dx + fit_w,
+                target_rect.y0 + dy + fit_h
+            )
+            
+            new_page.insert_image(fit_rect, pixmap=pix)
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
                 new_page = None
                 
+        # 🟢 SECURITY SHIELD: Manually force garbage collection of the heavy 144 DPI image
+        pix = None
+
     return current_rect_idx, new_page
 
-# 🟢 LIGHTNING FAST SYNCHRONOUS HTTP ROUTES
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "No selected file"}), 400
+
+    # 🟢 SECURITY SHIELD: Sanitize filename to prevent path traversal injection
+    safe_filename = secure_filename(file.filename)
+    if not safe_filename: safe_filename = "Document.pdf"
 
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     pages_to_keep_str = request.form.get('pages_to_keep', '')
@@ -187,20 +179,19 @@ def process_pdf_endpoint():
     orientation = request.form.get('orientation', 'portrait')
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
     try:
         doc = fitz.open(stream=file.read(), filetype="pdf")
         out_doc = fitz.open()
         page_indices = [int(p) for p in pages_to_keep_str.split(',')] if pages_to_keep_str.strip() else list(range(len(doc)))
             
-        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert)
             
         output_stream = io.BytesIO()
-        out_doc.save(output_stream, garbage=4, deflate=True) 
+        out_doc.save(output_stream, deflate=True) 
         out_doc.close(); doc.close()
         output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{file.filename}", mimetype='application/pdf')
+        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{safe_filename}", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -217,7 +208,6 @@ def merge_pdfs_endpoint():
     orientation = request.form.get('orientation', 'portrait')
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
     try:
         out_doc = fitz.open()
@@ -229,13 +219,12 @@ def merge_pdfs_endpoint():
             
             global_rect_idx, global_active_page = process_pdf_pages(
                 doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc,
-                do_invert=do_invert, preserve_images=preserve_images,
-                current_rect_idx=global_rect_idx, new_page=global_active_page
+                do_invert=do_invert, current_rect_idx=global_rect_idx, new_page=global_active_page
             )
             doc.close()
             
         output_stream = io.BytesIO()
-        out_doc.save(output_stream, garbage=4, deflate=True)
+        out_doc.save(output_stream, deflate=True)
         out_doc.close()
         output_stream.seek(0)
         return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
@@ -249,17 +238,20 @@ def reduce_size_endpoint():
         if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
         file = request.files['file']
         
+        safe_filename = secure_filename(file.filename)
+        if not safe_filename: safe_filename = "reduced_image.jpg"
+
         target_kb = float(request.form.get('target_kb', '150'))
         target_bytes = target_kb * 1024
-        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        ext = safe_filename.rsplit('.', 1)[-1].lower() if '.' in safe_filename else ''
         output_stream = io.BytesIO()
 
         if ext == 'pdf':
             doc = fitz.open(stream=file.read(), filetype="pdf")
-            doc.save(output_stream, garbage=4, deflate=True)
+            doc.save(output_stream, deflate=True)
             doc.close()
             output_stream.seek(0)
-            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{file.filename}", mimetype='application/pdf')
+            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename}", mimetype='application/pdf')
 
         elif ext in ['jpg', 'jpeg', 'png']:
             img = Image.open(file.stream)
@@ -282,7 +274,7 @@ def reduce_size_endpoint():
                     scale -= 0.1
 
             output_stream.seek(0)
-            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{file.filename.rsplit('.', 1)[0]}.jpg", mimetype='image/jpeg')
+            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename.rsplit('.', 1)[0]}.jpg", mimetype='image/jpeg')
         else:
             return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
@@ -327,7 +319,8 @@ def scan_detect_corners():
         
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if image is None: return jsonify({"error": "Invalid image"}), 400
+        if image is None:
+            return jsonify({"error": "Invalid image"}), 400
         
         orig_h, orig_w = image.shape[:2]
         ratio = orig_h / 500.0
@@ -368,13 +361,15 @@ def scan_process():
     try:
         if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
         file = request.files['file']
+        
         corners_str = request.form.get('corners')
         filter_mode = request.form.get('filter_mode', 'color_enhanced')
 
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-        if image is None: return jsonify({"error": "Backend could not decode image."}), 400
+        if image is None:
+            return jsonify({"error": "Backend could not decode image. Verify format."}), 400
             
         MAX_DIMENSION = 1600
         h, w = image.shape[:2]
@@ -387,6 +382,7 @@ def scan_process():
         if corners_str:
             pts_dict = json.loads(corners_str)
             pts = np.array([[(p['x'] / 100.0) * orig_w, (p['y'] / 100.0) * orig_h] for p in pts_dict], dtype="float32")
+            
             rect = order_points(pts)
             (tl, tr, br, bl) = rect
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
@@ -459,6 +455,7 @@ def scan_process():
         is_success, buffer = cv2.imencode(".jpg", final_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         io_buf = io.BytesIO(buffer)
         io_buf.seek(0)
+        
         return send_file(io_buf, mimetype='image/jpeg', as_attachment=True, download_name="Enhanced_Document.jpg")
 
     except Exception as e:
@@ -469,6 +466,7 @@ def scan_process():
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
+        
         if not files: return jsonify({"error": "No files provided"}), 400
 
         doc = fitz.open()
@@ -477,23 +475,30 @@ def scan_export_pdf():
         for file in files:
             img_bytes = file.read()
             page = doc.new_page(width=A4_W, height=A4_H)
+            
             img = Image.open(io.BytesIO(img_bytes))
             img_w, img_h = img.width, img.height
+            
             img_ratio = img_w / img_h
             page_ratio = A4_W / A4_H
             
             if img_ratio > page_ratio:
-                new_w, new_h = A4_W, A4_W / img_ratio
+                new_w = A4_W
+                new_h = A4_W / img_ratio
             else:
-                new_h, new_w = A4_H, A4_H * img_ratio
+                new_h = A4_H
+                new_w = A4_H * img_ratio
                 
-            x, y = (A4_W - new_w) / 2, (A4_H - new_h) / 2
+            x = (A4_W - new_w) / 2
+            y = (A4_H - new_h) / 2
+            
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
         output_stream = io.BytesIO()
-        doc.save(output_stream, garbage=4, deflate=True)
+        doc.save(output_stream, deflate=True)
         doc.close()
         output_stream.seek(0)
+        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
     except Exception as e:
         traceback.print_exc()
@@ -519,14 +524,16 @@ def generate_passport_sheet():
             for col in range(2):
                 x0 = margin_x + col * (PHOTO_W + margin_x)
                 y0 = margin_y + row * (PHOTO_H + margin_y)
+                
                 rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
                 page.insert_image(rect, stream=img_bytes)
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
 
         output_stream = io.BytesIO()
-        doc.save(output_stream, garbage=4, deflate=True)
+        doc.save(output_stream, deflate=True)
         doc.close()
         output_stream.seek(0)
+        
         return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
     except Exception as e:
         traceback.print_exc()

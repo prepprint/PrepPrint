@@ -10,9 +10,8 @@ export function FileUpload() {
   const [isMerging, setIsMerging] = useState(false);
   const [invertColors, setInvertColors] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [preserveImages, setPreserveImages] = useState(false); 
 
-  // 🟢 URL Protection to prevent CORS 308 errors
+  // URL Protection to prevent CORS 308 errors
   const API_BASE = (import.meta.env.VITE_API_URL || 'https://prepprint.onrender.com').replace(/\/$/, '');
 
   const [nUp, setNUp] = useState(1);
@@ -248,7 +247,6 @@ export function FileUpload() {
     formData.append('orientation', orientation);
     formData.append('gutter_margin', gutterMargin);
     formData.append('invert_colors', invertColors);
-    formData.append('preserve_images', preserveImages);
 
     const progressInterval = setInterval(() => {
       setFiles(prev => prev.map(f => (f.id === fileId && f.status === 'processing' && f.progress < 85) ? { ...f, progress: f.progress + 1 } : f));
@@ -282,7 +280,6 @@ export function FileUpload() {
     formData.append('orientation', orientation);
     formData.append('gutter_margin', gutterMargin);
     formData.append('invert_colors', invertColors);
-    formData.append('preserve_images', preserveImages);
 
     files.forEach(f => {
       const explicitPages = pageMaps[f.id] ? pageMaps[f.id].filter(p => p.keep).map(p => p.index).join(',') : '';
@@ -331,7 +328,7 @@ export function FileUpload() {
 
   return (
     <div className="w-full max-w-5xl mx-auto mt-8 px-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Custom Watermark Text</label>
           <input 
@@ -367,17 +364,6 @@ export function FileUpload() {
           </select>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Spiral Gutter Margin</label>
-          <select 
-            value={gutterMargin} onChange={(e) => setGutterMargin(e.target.value)} disabled={isGlobalProcessing}
-            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-all"
-          >
-            <option value="none">No Margin Offset (Standard)</option>
-            <option value="left">Left Edge Margin (Single-Sided Print)</option>
-            <option value="alternating">Alternating Margins (Double-Sided Print)</option>
-          </select>
-        </div>
-        <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Color Processing</label>
           <div 
             onClick={() => setInvertColors(!invertColors)}
@@ -386,18 +372,6 @@ export function FileUpload() {
             <span className="text-sm font-medium text-gray-900 dark:text-white select-none">{invertColors ? "Dark ➔ Light" : "Original Colors"}</span>
             <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${invertColors ? 'border-blue-600' : 'border-gray-400'}`}>
               {invertColors && <div className="w-2 h-2 rounded-full bg-blue-600" />}
-            </div>
-          </div>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Diagram Settings</label>
-          <div 
-            onClick={() => invertColors && setPreserveImages(!preserveImages)}
-            className={`w-full flex items-center justify-between px-4 py-2 border rounded-lg transition-all ${!invertColors ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700' : preserveImages ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 cursor-pointer' : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 cursor-pointer'}`}
-          >
-            <span className="text-sm font-medium text-gray-900 dark:text-white select-none truncate pr-2">Smart Invert (Preserve Images)</span>
-            <div className={`w-4 h-4 flex-shrink-0 rounded-sm border-2 flex items-center justify-center ${preserveImages ? 'border-blue-600 bg-blue-600' : 'border-gray-400'}`}>
-              {preserveImages && <CheckCircle className="w-3 h-3 text-white" />}
             </div>
           </div>
         </div>
