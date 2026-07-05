@@ -19,6 +19,7 @@ DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
+# 🟢 THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -75,7 +76,7 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-
+# 🟢 PURE VECTOR LOGIC: Infinite DPI, Zero RAM Usage
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, current_rect_idx=0, new_page=None):
     
     def create_new_page():
@@ -95,35 +96,33 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
         if page_num >= len(doc): continue
         page = doc[page_num]
         
-        # 🟢 SEQUENCE STEP 1: INVERT FIRST
-        if do_invert:
-            annot = page.add_rect_annot(page.rect)
-            annot.set_border(width=0)
-            annot.set_colors(stroke=None, fill=(1, 1, 1))
-            annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-            
-        # 🟢 SEQUENCE STEP 2: QUALITY 144 DPI (Bake the inverted page)
-        mat = fitz.Matrix(2.0, 2.0)
-        pix = page.get_pixmap(matrix=mat, annots=True)
-        
         slide_w = page.rect.width
         slide_h = page.rect.height
 
-        # 🟢 SEQUENCE STEP 3: N-UP PLACEMENT
         if n_up == 1:
             is_odd = (len(out_doc) % 2 == 0)
             
             if gutter_type == 'left':
                 fit_rect = fitz.Rect(36, 0, slide_w + 36, slide_h)
                 new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
+                render_rect = fitz.Rect(36, 0, slide_w + 36, slide_h)
             elif gutter_type == 'alternating':
                 fit_rect = fitz.Rect(36 if is_odd else 0, 0, slide_w + (36 if is_odd else 0), slide_h)
                 new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
+                render_rect = fitz.Rect(36 if is_odd else 0, 0, slide_w + (36 if is_odd else 0), slide_h)
             else:
                 fit_rect = fitz.Rect(0, 0, slide_w, slide_h)
                 new_page = out_doc.new_page(width=slide_w, height=slide_h)
+                render_rect = fit_rect
                 
-            new_page.insert_image(fit_rect, pixmap=pix)
+            # 1. Map Vector Page
+            new_page.show_pdf_page(render_rect, doc, page_num)
+            
+            # 2. Map Mathematical Inversion Overlay
+            if do_invert:
+                annot = new_page.add_rect_annot(render_rect)
+                annot.set_colors(stroke=None, fill=(1, 1, 1))
+                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
 
             if custom_watermark.strip():
                 new_page.insert_text((20, slide_h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
@@ -135,6 +134,7 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
             target_rect = grid_rects[current_rect_idx]
             
+            # Perfect aspect ratio grid alignment
             target_w = target_rect.width
             target_h = target_rect.height
             scale = min(target_w / slide_w, target_h / slide_h)
@@ -144,23 +144,27 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
             dx = (target_w - fit_w) / 2
             dy = (target_h - fit_h) / 2
             
-            fit_rect = fitz.Rect(
+            render_rect = fitz.Rect(
                 target_rect.x0 + dx,
                 target_rect.y0 + dy,
                 target_rect.x0 + dx + fit_w,
                 target_rect.y0 + dy + fit_h
             )
             
-            new_page.insert_image(fit_rect, pixmap=pix)
+            # 1. Map Vector Page
+            new_page.show_pdf_page(render_rect, doc, page_num)
+            
+            # 2. Map Mathematical Inversion Overlay
+            if do_invert:
+                annot = new_page.add_rect_annot(render_rect)
+                annot.set_colors(stroke=None, fill=(1, 1, 1))
+                annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
                 new_page = None
                 
-        # 🟢 SECURITY SHIELD: Manually force garbage collection of the heavy 144 DPI image
-        pix = None
-
     return current_rect_idx, new_page
 
 @app.route('/api/v1/process-pdf', methods=['POST'])
@@ -169,7 +173,6 @@ def process_pdf_endpoint():
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "No selected file"}), 400
 
-    # 🟢 SECURITY SHIELD: Sanitize filename to prevent path traversal injection
     safe_filename = secure_filename(file.filename)
     if not safe_filename: safe_filename = "Document.pdf"
 
