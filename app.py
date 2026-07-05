@@ -2,6 +2,7 @@ import os
 import fitz  # PyMuPDF
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
+from werkzeug.utils import secure_filename
 import io
 import traceback
 from dotenv import load_dotenv
@@ -78,103 +79,138 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 RESTORED: Your exact, pure vector sequence logic
+# 🟢 PURE VECTOR LOGIC: Restored Your Sequence (Invert -> Preserve -> Map)
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
-    if n_up == 1:
-        for page_num in page_indices:
-            if page_num >= len(doc): continue
-            page = doc[page_num]
-            w, h = page.rect.width, page.rect.height
+    
+    def create_new_page():
+        is_odd_sheet = (len(out_doc) % 2 == 0)
+        grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
+        new_p = out_doc.new_page(width=target_w, height=target_h)
+        if custom_watermark.strip():
+            new_p.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
+        return new_p, grid_rects, max_per_page
+
+    grid_rects, max_per_page = None, None
+    if n_up > 1 and new_page is not None:
+        is_odd_sheet = (len(out_doc) % 2 == 0)
+        grid_rects, max_per_page, _, _ = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
+
+    for page_num in page_indices:
+        if page_num >= len(doc): continue
+        page = doc[page_num]
+        
+        slide_w = page.rect.width
+        slide_h = page.rect.height
+        slide_x0 = page.rect.x0
+        slide_y0 = page.rect.y0
+
+        if n_up == 1:
             is_odd = (len(out_doc) % 2 == 0)
             
             if gutter_type == 'left':
-                target_rect = fitz.Rect(36, 0, w + 36, h)
-                new_page = out_doc.new_page(width=w + 36, height=h)
+                new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
+                render_rect = fitz.Rect(36, 0, slide_w + 36, slide_h)
             elif gutter_type == 'alternating':
-                target_rect = fitz.Rect(36 if is_odd else 0, 0, w + (36 if is_odd else 0), h)
-                new_page = out_doc.new_page(width=w + 36, height=h)
+                new_page = out_doc.new_page(width=slide_w + 36, height=slide_h)
+                render_rect = fitz.Rect(36 if is_odd else 0, 0, slide_w + (36 if is_odd else 0), slide_h)
             else:
-                target_rect = fitz.Rect(0, 0, w, h)
-                new_page = out_doc.new_page(width=w, height=h)
+                new_page = out_doc.new_page(width=slide_w, height=slide_h)
+                render_rect = fitz.Rect(0, 0, slide_w, slide_h)
                 
-            new_page.show_pdf_page(target_rect, doc, page_num)
+            new_page.show_pdf_page(render_rect, doc, page_num)
             
+            # STEP 1: Invert Document Color Space
             if do_invert:
-                annot = new_page.add_rect_annot(target_rect)
+                annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
+                # STEP 2: Smart Preserve Images 
                 if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + rect.x0, target_rect.y0 + rect.y0,
-                                    target_rect.x0 + rect.x1, target_rect.y0 + rect.y1
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
+                    try:
+                        for img_info in page.get_images():
+                            xref = img_info[0]
+                            base_image = doc.extract_image(xref)
+                            if base_image:
+                                image_bytes = base_image["image"]
+                                for rect in page.get_image_rects(xref):
+                                    mapped_rect = fitz.Rect(
+                                        render_rect.x0 + (rect.x0 - slide_x0), 
+                                        render_rect.y0 + (rect.y0 - slide_y0),
+                                        render_rect.x0 + (rect.x1 - slide_x0), 
+                                        render_rect.y0 + (rect.y1 - slide_y0)
+                                    )
+                                    new_page.insert_image(mapped_rect, stream=image_bytes)
+                    except Exception:
+                        pass # Silently skip corrupted images to prevent crashes
 
             if custom_watermark.strip():
-                new_page.insert_text((20, h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
+                new_page.insert_text((20, slide_h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
                 
-        return 0, None
-    else:
-        is_odd_sheet = (len(out_doc) % 2 == 0)
-        grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
-
-        for page_num in page_indices:
-            if page_num >= len(doc): continue
-            page = doc[page_num]
-            
+        else:
             if new_page is None:
-                is_odd_sheet = (len(out_doc) % 2 == 0)
-                grid_rects, max_per_page, target_w, target_h = get_grid_layout(n_up, orientation, gutter_type=gutter_type, is_odd_page=is_odd_sheet)
-                new_page = out_doc.new_page(width=target_w, height=target_h)
-                
-                if custom_watermark.strip():
-                    new_page.insert_text((20, target_h - 20), custom_watermark, fontsize=12, color=(1, 0, 0))
-                
+                new_page, grid_rects, max_per_page = create_new_page()
                 current_rect_idx = 0
-                
+
             target_rect = grid_rects[current_rect_idx]
-            new_page.show_pdf_page(target_rect, doc, page_num)
             
+            # STEP 3: N-Up Grid Alignment Math
+            scale = min(target_rect.width / slide_w, target_rect.height / slide_h)
+            
+            fit_w = slide_w * scale
+            fit_h = slide_h * scale
+            dx = (target_rect.width - fit_w) / 2
+            dy = (target_rect.height - fit_h) / 2
+            
+            render_rect = fitz.Rect(
+                target_rect.x0 + dx,
+                target_rect.y0 + dy,
+                target_rect.x0 + dx + fit_w,
+                target_rect.y0 + dy + fit_h
+            )
+            
+            new_page.show_pdf_page(render_rect, doc, page_num)
+            
+            # STEP 1: Invert Document Color Space
             if do_invert:
-                annot = new_page.add_rect_annot(target_rect)
+                annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
                 
+                # STEP 2: Smart Preserve Images 
                 if preserve_images:
-                    for img_info in doc[page_num].get_images():
-                        xref = img_info[0]
-                        base_image = doc.extract_image(xref)
-                        if base_image:
-                            image_bytes = base_image["image"]
-                            for rect in doc[page_num].get_image_rects(xref):
-                                scale_x = target_rect.width / page.rect.width
-                                scale_y = target_rect.height / page.rect.height
-                                mapped_rect = fitz.Rect(
-                                    target_rect.x0 + (rect.x0 * scale_x), target_rect.y0 + (rect.y0 * scale_y),
-                                    target_rect.x0 + (rect.x1 * scale_x), target_rect.y0 + (rect.y1 * scale_y)
-                                )
-                                new_page.insert_image(mapped_rect, stream=image_bytes)
+                    try:
+                        for img_info in page.get_images():
+                            xref = img_info[0]
+                            base_image = doc.extract_image(xref)
+                            if base_image:
+                                image_bytes = base_image["image"]
+                                for rect in page.get_image_rects(xref):
+                                    mapped_rect = fitz.Rect(
+                                        render_rect.x0 + ((rect.x0 - slide_x0) * scale),
+                                        render_rect.y0 + ((rect.y0 - slide_y0) * scale),
+                                        render_rect.x0 + ((rect.x1 - slide_x0) * scale),
+                                        render_rect.y0 + ((rect.y1 - slide_y0) * scale)
+                                    )
+                                    new_page.insert_image(mapped_rect, stream=image_bytes)
+                    except Exception:
+                        pass
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
                 current_rect_idx = 0
                 new_page = None
                 
-        return current_rect_idx, new_page
-
+    return current_rect_idx, new_page
 
 @app.route('/api/v1/process-pdf', methods=['POST'])
 def process_pdf_endpoint():
     if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
     file = request.files['file']
     if file.filename == '': return jsonify({"error": "No selected file"}), 400
+
+    safe_filename = secure_filename(file.filename)
+    if not safe_filename: safe_filename = "Document.pdf"
 
     custom_watermark = request.form.get('watermark', 'Optimized by PrepPrint.in')
     pages_to_keep_str = request.form.get('pages_to_keep', '')
@@ -192,14 +228,14 @@ def process_pdf_endpoint():
         process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
             
         output_stream = io.BytesIO()
-        # 🟢 REMOVED garbage=4 WHICH WAS CRASHING YOUR SERVER
-        out_doc.save(output_stream, deflate=True) 
+        # 🟢 CRITICAL FIX: Removed "deflate=True" which was forcing heavy zip-compression and crashing Render with 502 timeouts. 
+        out_doc.save(output_stream) 
         out_doc.close(); doc.close()
         output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{file.filename}", mimetype='application/pdf')
+        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{safe_filename}", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": "Internal Server Error"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/merge-pdfs', methods=['POST'])
 def merge_pdfs_endpoint():
@@ -231,14 +267,13 @@ def merge_pdfs_endpoint():
             doc.close()
             
         output_stream = io.BytesIO()
-        # 🟢 REMOVED garbage=4
-        out_doc.save(output_stream, deflate=True)
+        out_doc.save(output_stream) # Removed compression to fix 502 crash
         out_doc.close()
         output_stream.seek(0)
         return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
-        return jsonify({"error": "Internal Server Error during merging"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/v1/reduce-size', methods=['POST'])
 def reduce_size_endpoint():
@@ -246,18 +281,20 @@ def reduce_size_endpoint():
         if 'file' not in request.files: return jsonify({"error": "No file part provided"}), 400
         file = request.files['file']
         
+        safe_filename = secure_filename(file.filename)
+        if not safe_filename: safe_filename = "reduced_image.jpg"
+
         target_kb = float(request.form.get('target_kb', '150'))
         target_bytes = target_kb * 1024
-        ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+        ext = safe_filename.rsplit('.', 1)[-1].lower() if '.' in safe_filename else ''
         output_stream = io.BytesIO()
 
         if ext == 'pdf':
             doc = fitz.open(stream=file.read(), filetype="pdf")
-            # 🟢 REMOVED garbage=4
-            doc.save(output_stream, deflate=True)
+            doc.save(output_stream) # Removed compression to fix 502 crash
             doc.close()
             output_stream.seek(0)
-            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{file.filename}", mimetype='application/pdf')
+            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename}", mimetype='application/pdf')
 
         elif ext in ['jpg', 'jpeg', 'png']:
             img = Image.open(file.stream)
@@ -280,7 +317,7 @@ def reduce_size_endpoint():
                     scale -= 0.1
 
             output_stream.seek(0)
-            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{file.filename.rsplit('.', 1)[0]}.jpg", mimetype='image/jpeg')
+            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename.rsplit('.', 1)[0]}.jpg", mimetype='image/jpeg')
         else:
             return jsonify({"error": f"Unsupported file type: {ext}"}), 400
 
@@ -501,8 +538,7 @@ def scan_export_pdf():
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
         output_stream = io.BytesIO()
-        # 🟢 REMOVED garbage=4
-        doc.save(output_stream, deflate=True)
+        doc.save(output_stream) # Removed compression
         doc.close()
         output_stream.seek(0)
         
@@ -537,8 +573,7 @@ def generate_passport_sheet():
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
 
         output_stream = io.BytesIO()
-        # 🟢 REMOVED garbage=4
-        doc.save(output_stream, deflate=True)
+        doc.save(output_stream) # Removed compression
         doc.close()
         output_stream.seek(0)
         
