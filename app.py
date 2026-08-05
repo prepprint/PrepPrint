@@ -14,13 +14,12 @@ import numpy as np
 
 load_dotenv()
 
-# 🟢 BULLETPROOF ABSOLUTE PATHS
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
-# 🟢 THE NUCLEAR CORS FIX (Prevents the browser from hiding 500/502 crashes)
+# THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -33,7 +32,6 @@ def add_cors_headers(response):
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 PORT = int(os.getenv("PORT", 5000))
 
-# Configure Gemini AI
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 generation_config = {
   "temperature": 0.2,
@@ -41,7 +39,6 @@ generation_config = {
 }
 model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config)
 
-# Standard A4 Base Dimensions in points
 A4_PORTRAIT_W = 595
 A4_PORTRAIT_H = 842
 
@@ -79,8 +76,8 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# 🟢 PURE VECTOR LOGIC: Restored Your Sequence (Invert -> Preserve -> Map)
-def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, preserve_images=False, current_rect_idx=0, new_page=None):
+# PURE VECTOR SEQUENCE: No Image Extraction, No Compression
+def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, current_rect_idx=0, new_page=None):
     
     def create_new_page():
         is_odd_sheet = (len(out_doc) % 2 == 0)
@@ -101,8 +98,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
         
         slide_w = page.rect.width
         slide_h = page.rect.height
-        slide_x0 = page.rect.x0
-        slide_y0 = page.rect.y0
 
         if n_up == 1:
             is_odd = (len(out_doc) % 2 == 0)
@@ -117,32 +112,14 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 new_page = out_doc.new_page(width=slide_w, height=slide_h)
                 render_rect = fitz.Rect(0, 0, slide_w, slide_h)
                 
+            # STEP 1: Map Vector Page First
             new_page.show_pdf_page(render_rect, doc, page_num)
             
-            # STEP 1: Invert Document Color Space
+            # STEP 2: Layer Mathematical Inversion Mask Over It
             if do_invert:
                 annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-                
-                # STEP 2: Smart Preserve Images 
-                if preserve_images:
-                    try:
-                        for img_info in page.get_images():
-                            xref = img_info[0]
-                            base_image = doc.extract_image(xref)
-                            if base_image:
-                                image_bytes = base_image["image"]
-                                for rect in page.get_image_rects(xref):
-                                    mapped_rect = fitz.Rect(
-                                        render_rect.x0 + (rect.x0 - slide_x0), 
-                                        render_rect.y0 + (rect.y0 - slide_y0),
-                                        render_rect.x0 + (rect.x1 - slide_x0), 
-                                        render_rect.y0 + (rect.y1 - slide_y0)
-                                    )
-                                    new_page.insert_image(mapped_rect, stream=image_bytes)
-                    except Exception:
-                        pass # Silently skip corrupted images to prevent crashes
 
             if custom_watermark.strip():
                 new_page.insert_text((20, slide_h - 20), custom_watermark, fontsize=14, color=(1, 0, 0))
@@ -154,9 +131,8 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
             target_rect = grid_rects[current_rect_idx]
             
-            # STEP 3: N-Up Grid Alignment Math
+            # Perfect Aspect Ratio Math
             scale = min(target_rect.width / slide_w, target_rect.height / slide_h)
-            
             fit_w = slide_w * scale
             fit_h = slide_h * scale
             dx = (target_rect.width - fit_w) / 2
@@ -169,32 +145,14 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect.y0 + dy + fit_h
             )
             
+            # STEP 1: Map Vector Page First
             new_page.show_pdf_page(render_rect, doc, page_num)
             
-            # STEP 1: Invert Document Color Space
+            # STEP 2: Layer Mathematical Inversion Mask Over It
             if do_invert:
                 annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
                 annot.update(fill_color=(1, 1, 1), blend_mode=fitz.PDF_BM_Difference)
-                
-                # STEP 2: Smart Preserve Images 
-                if preserve_images:
-                    try:
-                        for img_info in page.get_images():
-                            xref = img_info[0]
-                            base_image = doc.extract_image(xref)
-                            if base_image:
-                                image_bytes = base_image["image"]
-                                for rect in page.get_image_rects(xref):
-                                    mapped_rect = fitz.Rect(
-                                        render_rect.x0 + ((rect.x0 - slide_x0) * scale),
-                                        render_rect.y0 + ((rect.y0 - slide_y0) * scale),
-                                        render_rect.x0 + ((rect.x1 - slide_x0) * scale),
-                                        render_rect.y0 + ((rect.y1 - slide_y0) * scale)
-                                    )
-                                    new_page.insert_image(mapped_rect, stream=image_bytes)
-                    except Exception:
-                        pass
             
             current_rect_idx += 1
             if current_rect_idx >= max_per_page:
@@ -218,18 +176,16 @@ def process_pdf_endpoint():
     orientation = request.form.get('orientation', 'portrait')
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
     try:
         doc = fitz.open(stream=file.read(), filetype="pdf")
         out_doc = fitz.open()
         page_indices = [int(p) for p in pages_to_keep_str.split(',')] if pages_to_keep_str.strip() else list(range(len(doc)))
             
-        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert, preserve_images=preserve_images)
+        process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert)
             
         output_stream = io.BytesIO()
-        # 🟢 CRITICAL FIX: Removed "deflate=True" which was forcing heavy zip-compression and crashing Render with 502 timeouts. 
-        out_doc.save(output_stream) 
+        out_doc.save(output_stream) # NO COMPRESSION (Fixes 502 Crash)
         out_doc.close(); doc.close()
         output_stream.seek(0)
         return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{safe_filename}", mimetype='application/pdf')
@@ -249,7 +205,6 @@ def merge_pdfs_endpoint():
     orientation = request.form.get('orientation', 'portrait')
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
-    preserve_images = request.form.get('preserve_images', 'false') == 'true'
     
     try:
         out_doc = fitz.open()
@@ -261,13 +216,12 @@ def merge_pdfs_endpoint():
             
             global_rect_idx, global_active_page = process_pdf_pages(
                 doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc,
-                do_invert=do_invert, preserve_images=preserve_images,
-                current_rect_idx=global_rect_idx, new_page=global_active_page
+                do_invert=do_invert, current_rect_idx=global_rect_idx, new_page=global_active_page
             )
             doc.close()
             
         output_stream = io.BytesIO()
-        out_doc.save(output_stream) # Removed compression to fix 502 crash
+        out_doc.save(output_stream) # NO COMPRESSION
         out_doc.close()
         output_stream.seek(0)
         return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
@@ -291,7 +245,7 @@ def reduce_size_endpoint():
 
         if ext == 'pdf':
             doc = fitz.open(stream=file.read(), filetype="pdf")
-            doc.save(output_stream) # Removed compression to fix 502 crash
+            doc.save(output_stream) # NO COMPRESSION
             doc.close()
             output_stream.seek(0)
             return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename}", mimetype='application/pdf')
@@ -362,8 +316,7 @@ def scan_detect_corners():
         
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if image is None:
-            return jsonify({"error": "Invalid image"}), 400
+        if image is None: return jsonify({"error": "Invalid image"}), 400
         
         orig_h, orig_w = image.shape[:2]
         ratio = orig_h / 500.0
@@ -411,8 +364,7 @@ def scan_process():
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-        if image is None:
-            return jsonify({"error": "Backend could not decode image. Verify format."}), 400
+        if image is None: return jsonify({"error": "Backend could not decode image."}), 400
             
         MAX_DIMENSION = 1600
         h, w = image.shape[:2]
@@ -509,7 +461,6 @@ def scan_process():
 def scan_export_pdf():
     try:
         files = request.files.getlist('files')
-        
         if not files: return jsonify({"error": "No files provided"}), 400
 
         doc = fitz.open()
@@ -538,7 +489,7 @@ def scan_export_pdf():
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
         output_stream = io.BytesIO()
-        doc.save(output_stream) # Removed compression
+        doc.save(output_stream) # NO COMPRESSION
         doc.close()
         output_stream.seek(0)
         
@@ -573,7 +524,7 @@ def generate_passport_sheet():
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
 
         output_stream = io.BytesIO()
-        doc.save(output_stream) # Removed compression
+        doc.save(output_stream) # NO COMPRESSION
         doc.close()
         output_stream.seek(0)
         
