@@ -3,7 +3,8 @@ import fitz  # PyMuPDF
 from flask import Flask, request, send_file, jsonify, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-import io
+import tempfile
+import gc
 import traceback
 from dotenv import load_dotenv
 from PIL import Image
@@ -19,7 +20,6 @@ DIST_DIR = os.path.join(BASE_DIR, 'frontend', 'dist')
 
 app = Flask(__name__, static_folder=DIST_DIR, static_url_path='/')
 
-# THE NUCLEAR CORS FIX
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 @app.after_request
@@ -76,7 +76,6 @@ def get_grid_layout(n_up, orientation, padding=12, gutter_type='none', is_odd_pa
             
     return rects, rows * cols, page_w, page_h
 
-# PURE VECTOR SEQUENCE: No Image Extraction, No Compression
 def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=True, current_rect_idx=0, new_page=None):
     
     def create_new_page():
@@ -112,10 +111,8 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 new_page = out_doc.new_page(width=slide_w, height=slide_h)
                 render_rect = fitz.Rect(0, 0, slide_w, slide_h)
                 
-            # STEP 1: Map Vector Page First
             new_page.show_pdf_page(render_rect, doc, page_num)
             
-            # STEP 2: Layer Mathematical Inversion Mask Over It
             if do_invert:
                 annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
@@ -131,7 +128,6 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
 
             target_rect = grid_rects[current_rect_idx]
             
-            # Perfect Aspect Ratio Math
             scale = min(target_rect.width / slide_w, target_rect.height / slide_h)
             fit_w = slide_w * scale
             fit_h = slide_h * scale
@@ -145,10 +141,8 @@ def process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gu
                 target_rect.y0 + dy + fit_h
             )
             
-            # STEP 1: Map Vector Page First
             new_page.show_pdf_page(render_rect, doc, page_num)
             
-            # STEP 2: Layer Mathematical Inversion Mask Over It
             if do_invert:
                 annot = new_page.add_rect_annot(render_rect)
                 annot.set_colors(stroke=None, fill=(1, 1, 1))
@@ -177,6 +171,7 @@ def process_pdf_endpoint():
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     
+    temp_path = None
     try:
         doc = fitz.open(stream=file.read(), filetype="pdf")
         out_doc = fitz.open()
@@ -184,11 +179,19 @@ def process_pdf_endpoint():
             
         process_pdf_pages(doc, page_indices, custom_watermark, n_up, orientation, gutter_type, out_doc, do_invert=do_invert)
             
-        output_stream = io.BytesIO()
-        out_doc.save(output_stream) # NO COMPRESSION (Fixes 502 Crash)
-        out_doc.close(); doc.close()
-        output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name=f"PrepPrint_{safe_filename}", mimetype='application/pdf')
+        # 🟢 MEMORY FIX: Save directly to the hard drive, not into RAM
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_path = temp_file.name
+        temp_file.close()
+        
+        out_doc.save(temp_path) 
+        out_doc.close()
+        doc.close()
+        
+        # 🟢 Clean up memory explicitly
+        gc.collect()
+        
+        return send_file(temp_path, as_attachment=True, download_name=f"PrepPrint_{safe_filename}", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -206,6 +209,7 @@ def merge_pdfs_endpoint():
     gutter_type = request.form.get('gutter_margin', 'none')
     do_invert = request.form.get('invert_colors', 'true') == 'true'
     
+    temp_path = None
     try:
         out_doc = fitz.open()
         global_rect_idx, global_active_page = 0, None
@@ -220,11 +224,20 @@ def merge_pdfs_endpoint():
             )
             doc.close()
             
-        output_stream = io.BytesIO()
-        out_doc.save(output_stream) # NO COMPRESSION
+            # 🟢 MEMORY FIX: Force RAM clearance after every single file is merged
+            gc.collect() 
+            
+        # 🟢 MEMORY FIX: Save merged massive PDF to disk, never RAM
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_path = temp_file.name
+        temp_file.close()
+        
+        out_doc.save(temp_path)
         out_doc.close()
-        output_stream.seek(0)
-        return send_file(output_stream, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
+        
+        gc.collect()
+        
+        return send_file(temp_path, as_attachment=True, download_name="PrepPrint_Merged.pdf", mimetype='application/pdf')
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -241,16 +254,20 @@ def reduce_size_endpoint():
         target_kb = float(request.form.get('target_kb', '150'))
         target_bytes = target_kb * 1024
         ext = safe_filename.rsplit('.', 1)[-1].lower() if '.' in safe_filename else ''
-        output_stream = io.BytesIO()
-
+        
         if ext == 'pdf':
             doc = fitz.open(stream=file.read(), filetype="pdf")
-            doc.save(output_stream) # NO COMPRESSION
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            temp_path = temp_file.name
+            temp_file.close()
+            
+            doc.save(temp_path)
             doc.close()
-            output_stream.seek(0)
-            return send_file(output_stream, as_attachment=True, download_name=f"reduced_{safe_filename}", mimetype='application/pdf')
+            gc.collect()
+            return send_file(temp_path, as_attachment=True, download_name=f"reduced_{safe_filename}", mimetype='application/pdf')
 
         elif ext in ['jpg', 'jpeg', 'png']:
+            output_stream = io.BytesIO()
             img = Image.open(file.stream)
             if img.mode in ("RGBA", "P"): img = img.convert("RGB")
             quality = 95
@@ -285,6 +302,7 @@ def generate_study_materials():
         doc = fitz.open(stream=file.read(), filetype="pdf")
         extracted_text = "".join([doc[page_num].get_text() for page_num in range(min(len(doc), 30))])
         doc.close()
+        gc.collect()
 
         prompt = f"""
         You are an expert academic tutor. Analyze the following textbook chapter/notes and generate study materials.
@@ -357,7 +375,6 @@ def scan_process():
     try:
         if 'file' not in request.files: return jsonify({"error": "No file provided"}), 400
         file = request.files['file']
-        
         corners_str = request.form.get('corners')
         filter_mode = request.form.get('filter_mode', 'color_enhanced')
 
@@ -377,7 +394,6 @@ def scan_process():
         if corners_str:
             pts_dict = json.loads(corners_str)
             pts = np.array([[(p['x'] / 100.0) * orig_w, (p['y'] / 100.0) * orig_h] for p in pts_dict], dtype="float32")
-            
             rect = order_points(pts)
             (tl, tr, br, bl) = rect
             widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
@@ -450,7 +466,6 @@ def scan_process():
         is_success, buffer = cv2.imencode(".jpg", final_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
         io_buf = io.BytesIO(buffer)
         io_buf.seek(0)
-        
         return send_file(io_buf, mimetype='image/jpeg', as_attachment=True, download_name="Enhanced_Document.jpg")
 
     except Exception as e:
@@ -469,31 +484,28 @@ def scan_export_pdf():
         for file in files:
             img_bytes = file.read()
             page = doc.new_page(width=A4_W, height=A4_H)
-            
             img = Image.open(io.BytesIO(img_bytes))
             img_w, img_h = img.width, img.height
-            
             img_ratio = img_w / img_h
             page_ratio = A4_W / A4_H
             
             if img_ratio > page_ratio:
-                new_w = A4_W
-                new_h = A4_W / img_ratio
+                new_w, new_h = A4_W, A4_W / img_ratio
             else:
-                new_h = A4_H
-                new_w = A4_H * img_ratio
+                new_h, new_w = A4_H, A4_H * img_ratio
                 
-            x = (A4_W - new_w) / 2
-            y = (A4_H - new_h) / 2
-            
+            x, y = (A4_W - new_w) / 2, (A4_H - new_h) / 2
             page.insert_image(fitz.Rect(x, y, x + new_w, y + new_h), stream=img_bytes)
 
-        output_stream = io.BytesIO()
-        doc.save(output_stream) # NO COMPRESSION
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_path = temp_file.name
+        temp_file.close()
+
+        doc.save(temp_path)
         doc.close()
-        output_stream.seek(0)
+        gc.collect()
         
-        return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
+        return send_file(temp_path, mimetype='application/pdf', as_attachment=True, download_name="PrepPrint_Enhanced_Scans.pdf")
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -518,17 +530,19 @@ def generate_passport_sheet():
             for col in range(2):
                 x0 = margin_x + col * (PHOTO_W + margin_x)
                 y0 = margin_y + row * (PHOTO_H + margin_y)
-                
                 rect = fitz.Rect(x0, y0, x0 + PHOTO_W, y0 + PHOTO_H)
                 page.insert_image(rect, stream=img_bytes)
                 page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=0.5)
 
-        output_stream = io.BytesIO()
-        doc.save(output_stream) # NO COMPRESSION
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        temp_path = temp_file.name
+        temp_file.close()
+
+        doc.save(temp_path)
         doc.close()
-        output_stream.seek(0)
+        gc.collect()
         
-        return send_file(output_stream, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
+        return send_file(temp_path, mimetype='application/pdf', as_attachment=True, download_name="Passport_Print_Sheet_4x6.pdf")
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
